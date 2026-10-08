@@ -1,41 +1,52 @@
 """Project service routes — CRUD for projects and queries."""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.session import get_session
 from services.project_service.domain.models import Project, Query
+from services.project_service.repositories.project_repo import ProjectRepository
+from services.project_service.repositories.query_repo import QueryRepository
 
 router = APIRouter(tags=["projects"])
+
+
+async def _project_repo(session: AsyncSession = Depends(get_session)) -> ProjectRepository:
+    return ProjectRepository(session)
+
+
+async def _query_repo(session: AsyncSession = Depends(get_session)) -> QueryRepository:
+    return QueryRepository(session)
 
 
 @router.post("/")
 async def create_project(
     body: dict,
-    session: AsyncSession = Depends(get_session),
+    project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """Create a new project."""
+    from uuid import uuid4
+
     project = Project(
+        id=uuid4(),
         name=body["name"],
         domain=body["domain"],
         strategy_type=body.get("strategy_type", "daily"),
         daily_limit=body.get("daily_limit", 500),
         region=body.get("region"),
     )
-    session.add(project)
-    await session.commit()
-    await session.refresh(project)
+    project = await project_repo.create(project)
     return {"id": str(project.id), "name": project.name, "domain": project.domain}
 
 
 @router.get("/")
 async def list_projects(
-    session: AsyncSession = Depends(get_session),
+    project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """List all projects."""
-    result = await session.execute(select(Project))
-    projects = result.scalars().all()
+    result = await project_repo.get_all_for_user(None)  # type: ignore[arg-type]
     return [
         {
             "id": str(p.id),
@@ -45,20 +56,17 @@ async def list_projects(
             "daily_limit": p.daily_limit,
             "is_active": p.is_active,
         }
-        for p in projects
+        for p in result
     ]
 
 
 @router.get("/{project_id}")
 async def get_project(
     project_id: str,
-    session: AsyncSession = Depends(get_session),
+    project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """Get a single project by ID."""
-    from uuid import UUID
-
-    result = await session.execute(select(Project).where(Project.id == UUID(project_id)))
-    project = result.scalar_one_or_none()
+    project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return {
@@ -76,79 +84,58 @@ async def get_project(
 async def update_project(
     project_id: str,
     body: dict,
-    session: AsyncSession = Depends(get_session),
+    project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """Update an existing project."""
-    from uuid import UUID
-
-    result = await session.execute(select(Project).where(Project.id == UUID(project_id)))
-    project = result.scalar_one_or_none()
+    project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
     for key, value in body.items():
         if hasattr(project, key) and key not in ("id", "created_at", "updated_at"):
             setattr(project, key, value)
-
-    await session.commit()
     return {"id": str(project.id), "updated": True}
 
 
 @router.delete("/{project_id}")
 async def delete_project(
     project_id: str,
-    session: AsyncSession = Depends(get_session),
+    project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """Delete a project."""
-    from uuid import UUID
-
-    result = await session.execute(select(Project).where(Project.id == UUID(project_id)))
-    project = result.scalar_one_or_none()
+    project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    await session.delete(project)
-    await session.commit()
+    await project_repo.delete(project)
     return {"deleted": True}
 
 
 # --- Query endpoints -------------------------------------------------------- #
 
-
 @router.post("/{project_id}/queries")
 async def add_query(
     project_id: str,
     body: dict,
-    session: AsyncSession = Depends(get_session),
+    query_repo: QueryRepository = Depends(_query_repo),
 ):
     """Add a query (term) to a project."""
-    from uuid import UUID
-
     query = Query(
         project_id=UUID(project_id),
         text=body["text"],
         url=body.get("url"),
         click_url=body.get("click_url"),
-        geo=body.get("geo"),
+        geo=body.get("geo", {}),
     )
-    session.add(query)
-    await session.commit()
-    await session.refresh(query)
+    query = await query_repo.create(query)
     return {"id": str(query.id), "text": query.text}
 
 
 @router.get("/{project_id}/queries")
 async def list_queries(
     project_id: str,
-    session: AsyncSession = Depends(get_session),
+    query_repo: QueryRepository = Depends(_query_repo),
 ):
     """List all queries for a project."""
-    from uuid import UUID
-
-    result = await session.execute(
-        select(Query).where(Query.project_id == UUID(project_id))
-    )
-    queries = result.scalars().all()
+    queries = await query_repo.get_by_project(UUID(project_id))
     return [
         {
             "id": str(q.id),
