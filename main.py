@@ -1,0 +1,58 @@
+"""Main FastAPI application entry point for the modular monolith.
+
+All service routers are registered under a single FastAPI instance running on port 8000.
+Service boundaries are enforced via Python module packages and dependency injection.
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from core.config import settings
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="TopInjector",
+        description=(
+            "SaaS dashboard for monitoring keyword positions and managing search traffic patterns across websites."
+        ),
+        version="0.1.0",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ---- Register service routers ----------------------------------------- #
+    from services.auth_service.routes import auth as auth_router
+    from services.user_service.routes import users as user_router
+    from services.project_service.routes import projects as project_router
+    from services.queue_service.routes import queue as queue_router
+    from services.analytics_service.routes import analytics as analytics_router
+    from services.notification_service.routes import (
+        notifications as notification_router,
+    )
+    from services.external_api_service.routes import external as external_router
+
+    app.include_router(auth_router.router, prefix="/api/auth")
+    app.include_router(user_router.router, prefix="/api/users")
+    app.include_router(project_router.router)
+    app.include_router(queue_router.router)
+    app.include_router(analytics_router.router)
+    app.include_router(notification_router.router, prefix="/api/notifications")
+    app.include_router(external_router.router)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()

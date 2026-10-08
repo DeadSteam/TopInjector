@@ -1,0 +1,37 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - heading "Вход в систему" [level=2] [ref=e6]
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - generic [ref=e9]:
+            - text: Email
+            - generic [ref=e10]: "*"
+          - textbox "email@example.com" [ref=e11]
+        - generic [ref=e12]:
+          - generic [ref=e13]:
+            - text: Пароль
+            - generic [ref=e14]: "*"
+          - textbox "Пароль *" [ref=e15]:
+            - /placeholder: Введите пароль
+        - link "Забыли пароль?" [ref=e17] [cursor=pointer]:
+          - /url: https://ghostlab.ru/forgot-password
+        - button "Войти" [ref=e18] [cursor=pointer]
+        - link "Нет аккаунта? Зарегистрироваться" [ref=e21] [cursor=pointer]:
+          - /url: https://ghostlab.ru/register
+    - region "Уведомление о cookie" [ref=e23]:
+      - generic [ref=e24]:
+        - paragraph [ref=e25]:
+          - text: "Мы используем cookie для работы сайта, улучшения пользовательского опыта и аналитики. Продолжая пользоваться сайтом, вы соглашаетесь с обработкой cookie в соответствии с нашими документами:"
+          - link "Пользовательское соглашение" [ref=e26] [cursor=pointer]:
+            - /url: /polzovatelskoe-soglasenie
+          - text: ","
+          - link "Политика обработки данных" [ref=e27] [cursor=pointer]:
+            - /url: /politika-obrabotki-personalnyx-dannyx
+          - text: и
+          - link "Оферта" [ref=e28] [cursor=pointer]:
+            - /url: /dogovor-oferta
+        - button "Понятно" [ref=e29] [cursor=pointer]
+  - generic:
+    - generic:
+      - region "Notifications alt+T"

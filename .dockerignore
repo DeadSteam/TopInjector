@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+.git
+.gitignore
+*.md
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+node_modules
+frontend/.svelte-kit
+frontend/dist
