@@ -4,7 +4,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text, Boolean, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from core.models import UUIDModel, Base
+from shared.database.base import UUIDModel, Base
 
 
 class Project(UUIDModel):

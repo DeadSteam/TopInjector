@@ -7,7 +7,7 @@ Service boundaries are enforced via Python module packages and dependency inject
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.config import settings
+from shared.config import settings
 
 
 def create_app() -> FastAPI:
@@ -40,13 +40,14 @@ def create_app() -> FastAPI:
     )
     from services.external_api_service.routes import external as external_router
 
+    # Prefixes live here only; module routers declare paths relative to them.
     app.include_router(auth_router.router, prefix="/api/auth")
     app.include_router(user_router.router, prefix="/api/users")
-    app.include_router(project_router.router)
-    app.include_router(queue_router.router)
-    app.include_router(analytics_router.router)
+    app.include_router(project_router.router, prefix="/api/projects")
+    app.include_router(queue_router.router, prefix="/api/queue")
+    app.include_router(analytics_router.router, prefix="/api/analytics")
     app.include_router(notification_router.router, prefix="/api/notifications")
-    app.include_router(external_router.router)
+    app.include_router(external_router.router, prefix="/api/external/v1")
 
     @app.get("/health")
     async def health():

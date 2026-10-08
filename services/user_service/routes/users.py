@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_session
+from shared.database.session import get_session
 
 router = APIRouter(tags=["users"])
 

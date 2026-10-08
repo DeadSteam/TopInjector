@@ -10,8 +10,8 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_session
-from core.config import settings
+from shared.database.session import get_session
+from shared.config import settings
 from services.auth_service.domain.models import User
 from services.auth_service.domain.schemas import (
     LoginRequest,
@@ -20,7 +20,7 @@ from services.auth_service.domain.schemas import (
     RefreshRequest,
 )
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(tags=["auth"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")

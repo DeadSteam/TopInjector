@@ -8,7 +8,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text, DateTime, Uniq
 from sqlalchemy.dialects.postgresql import JSONB, ENUM
 from sqlalchemy.orm import relationship
 
-from core.models import Base
+from shared.database.base import Base
 
 
 class TaskSource(str, PyEnum):

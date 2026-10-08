@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_session
+from shared.database.session import get_session
 from services.project_service.domain.models import Project, Query
 
 router = APIRouter(tags=["projects"])

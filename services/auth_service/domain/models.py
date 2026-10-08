@@ -1,9 +1,8 @@
 """Auth service domain models."""
 
-from sqlalchemy import Column, String, DateTime, func, Boolean, Index
-from uuid import UUID
+from sqlalchemy import Boolean, Column, Index, Integer, String
 
-from core.models import UUIDModel
+from shared.database.base import UUIDModel
 
 
 class User(UUIDModel):

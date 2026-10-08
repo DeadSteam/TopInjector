@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_session
+from shared.database.session import get_session
 from services.queue_service.domain.models import QueueTask
 
 router = APIRouter(tags=["queue"])

@@ -1,3 +1,3 @@
-from shared.events.bus import EventBus, ServiceEvent, EventName
+from shared.events.bus import Event, EventBus, get_bus
 
-__all__ = ["EventBus", "ServiceEvent", "EventName"]
+__all__ = ["Event", "EventBus", "get_bus"]
