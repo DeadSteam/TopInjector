@@ -1,9 +1,11 @@
 """Project and Query domain models."""
 
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.database.base import UUIDModel
@@ -51,3 +53,23 @@ class Query(UUIDModel):
     frequency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     project: Mapped[Project] = relationship(back_populates="queries")
+
+
+class ProjectToken(UUIDModel):
+    """API token for external API access (X-Auth-Token header)."""
+
+    __tablename__ = "project_tokens"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL")
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    token_string: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+
+    __table_args__ = (
+        # One active token per project per user at a time.
+        UniqueConstraint("user_id", "project_id", name="uq_user_project_token"),
+    )

@@ -58,3 +58,20 @@ async def app(session_factory):
 async def client(app):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
+
+
+PASSWORD = "correct-horse-42"
+
+
+async def register(client: AsyncClient, email: str = "owner@example.com") -> dict[str, str]:
+    """Register a user and return Authorization headers for them."""
+    resp = await client.post(
+        "/api/auth/register", json={"email": email, "password": PASSWORD, "display_name": "Owner"}
+    )
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest_asyncio.fixture
+async def auth_headers(client) -> dict[str, str]:
+    return await register(client)
