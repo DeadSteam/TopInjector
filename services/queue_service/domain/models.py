@@ -1,25 +1,29 @@
 """Queue task domain model and enums."""
 
-from datetime import datetime, timezone
-from enum import Enum as PyEnum
-from uuid import UUID, uuid4
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+from uuid import UUID
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, DateTime, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, ENUM
-from sqlalchemy.orm import relationship
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, Text, text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from shared.database.base import Base
+from services.project_service.domain.models import Project
+from shared.database.base import UUIDModel
+from shared.database.types import JSONType
 
 
-class TaskSource(str, PyEnum):
+class TaskSource(StrEnum):
     """Source of a queue task."""
+
     STRATEGY = "strategy"
     AUTOBURST = "autoburst"
     PROKLIK = "proklik"
 
 
-class TaskStatus(str, PyEnum):
+class TaskStatus(StrEnum):
     """Current status of a queue task."""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -27,33 +31,46 @@ class TaskStatus(str, PyEnum):
     STUCK = "stuck"
 
 
-class QueueTask(Base):
+def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
+    return [member.value for member in enum_cls]
+
+
+class QueueTask(UUIDModel):
     """A single task in the processing queue."""
 
     __tablename__ = "queue_tasks"
 
-    id = Column(String(50), primary_key=True)
-    project_id = Column(String(50), ForeignKey("projects.id"), nullable=False, index=True)
-    query_id = Column(String(50), nullable=True)
-    click_url = Column(Text, nullable=False)
-    source = Column(
-        ENUM(TaskSource, values_callable=lambda e: [x.value for x in e]),
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    query_id: Mapped[UUID | None] = mapped_column(ForeignKey("queries.id", ondelete="SET NULL"))
+    click_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[TaskSource] = mapped_column(
+        Enum(TaskSource, name="task_source", values_callable=_enum_values),
         default=TaskSource.STRATEGY,
         nullable=False,
     )
-    status = Column(
-        ENUM(TaskStatus, values_callable=lambda e: [x.value for x in e]),
+    status: Mapped[TaskStatus] = mapped_column(
+        Enum(TaskStatus, name="task_status", values_callable=_enum_values),
         default=TaskStatus.PENDING,
         nullable=False,
+        index=True,
     )
-    geo = Column(JSONB, nullable=False, default=dict)
-    details = Column(Text, nullable=True)
-    position = Column(Integer, nullable=True)
-    pending_check_at = Column(DateTime(timezone=True), nullable=True)
+    geo: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    details: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[int | None] = mapped_column(Integer)
+    pending_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        UniqueConstraint("click_url", "status", name="uq_click_pending"),
+        # At most one *pending* task per URL within a project; finished tasks may repeat.
+        Index(
+            "uq_queue_tasks_pending_click_url",
+            "project_id",
+            "click_url",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
     )
 
-    # relationship
-    project = relationship("Project")
+    project: Mapped[Project] = relationship()
