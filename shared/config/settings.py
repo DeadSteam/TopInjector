@@ -1,12 +1,13 @@
 """Application settings loaded from environment variables."""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Shared settings for the modular monolith."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", populate_by_name=True)
 
     # Database
     postgres_host: str = "localhost"
@@ -14,9 +15,13 @@ class Settings(BaseSettings):
     postgres_user: str = "ghostlab"
     postgres_password: str = "ghostlab_pass"
     postgres_db: str = "ghostlab"
+    # Full DSN; when set it wins over the postgres_* components.
+    database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
 
     @property
     def database_url(self) -> str:
+        if self.database_url_override:
+            return self.database_url_override
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
