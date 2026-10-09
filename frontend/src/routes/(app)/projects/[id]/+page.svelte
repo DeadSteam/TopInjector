@@ -543,6 +543,11 @@
 						<button type="submit" class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Добавить</button>
 					</form>
 					<div class="flex items-center gap-2">
+							<label class="px-2 py-1 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded cursor-pointer font-medium transition-colors">
+								Импорт CSV
+								<input type="file" accept=".csv" class="hidden" onchange={handleImportFile} />
+							</label>
+							<button onclick={handleExport} class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors font-medium">Экспорт CSV</button>
 						{#if selectedQueryIds.size > 0}
 							<button onclick={() => { boostDailyClicks = queries.length > 0 ? Math.max(...queries.filter(q => selectedQueryIds.has(q.id)).map(q => q.daily_clicks)) : 10; showBoost = true; }} class="px-3 py-1.5 text-sm bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium">Буст (выбранные: {selectedQueryIds.size})</button>
 							<button onclick={() => selectedQueryIds.clear()} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Снять все</button>

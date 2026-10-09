@@ -127,6 +127,12 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/queries/${queryId}`, {
 				method: "DELETE",
 			}),
+		importQueries: (projectId: string, csvText: string) =>
+			fetcher(`/api/projects/${projectId}/queries/import`, {
+				method: "POST",
+				headers: { "Content-Type": "text/csv" },
+				body: csvText,
+			}),
 		boost: (projectId: string, data: any) =>
 			fetcher(`/api/projects/${projectId}/boost`, {
 				method: "POST",

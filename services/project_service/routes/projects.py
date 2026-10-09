@@ -908,3 +908,93 @@ async def remove_delegate(
     await session.delete(invite)
     await session.commit()
     return {"deleted": True}
+
+
+# --- Query Import / Export ---------------------------------------------------- #
+
+@router.post("/{project_id}/queries/import")
+async def import_queries(
+    project_id: str,
+    body: dict,
+    query_repo: QueryRepository = Depends(_query_repo),
+    session: AsyncSession = Depends(get_session),
+):
+    """Bulk import queries from CSV text column. Body must contain 'csv_text' (string)."""
+    csv_raw = body.get("csv_text", "")
+    if not csv_raw.strip():
+        raise HTTPException(status_code=400, detail="CSV content is empty")
+
+    import csv as _csv
+    import io as _io
+    import urllib.parse as _urllib
+
+    reader = _csv.DictReader(_io.StringIO(csv_raw))
+    created = 0
+    skipped = 0
+    project_uuid = UUID(project_id)
+
+    for row in reader:
+        text = (row.get("text") or row.get("Текст") or "").strip()
+        if not text:
+            # Try first column as text
+            first_val = next(iter(row.values()), "").strip() if row else ""
+            if not first_val:
+                skipped += 1
+                continue
+            text = first_val
+
+        url = (row.get("url") or "").strip() or None
+        click_url = ""
+        if url and url.startswith(("http://", "https://")):
+            # Generate yandex search click_url as default
+            params = _urllib.urlencode({"q": text})
+            click_url = f"https://yandex.ru/search/?text={_urllib.quote(text)}"
+
+        query = Query(
+            project_id=project_uuid,
+            text=text,
+            url=url if url else None,
+            click_url=click_url or None,
+            geo={},
+            daily_clicks=0,
+            position=None,
+            frequency=1,
+        )
+        created += 1
+
+    try:
+        await session.flush()
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=f"Import error: {str(e)}")
+
+    return {"created": created, "skipped": skipped}
+
+
+@router.get("/{project_id}/queries/export.csv")
+async def export_queries(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Export all queries for a project as CSV."""
+    queries_result = await session.execute(select(Query).where(Query.project_id == UUID(project_id)))
+    queries = queries_result.scalars().all()
+
+    if not queries:
+        raise HTTPException(status_code=404, detail="No queries to export")
+
+    output = _io.StringIO()
+    writer = _csv.writer(output)
+    writer.writerow(["text", "url", "daily_clicks", "frequency", "geo"])
+    for q in queries:
+        geo_str = _json.dumps(q.geo) if isinstance(q.geo, dict) else ""
+        writer.writerow([q.text, q.url or "", q.daily_clicks, q.frequency, geo_str])
+
+    from fastapi.responses import Response as FastAPIResponse
+
+    return FastAPIResponse(
+        content=output.getvalue(),
+        headers={"Content-Disposition": f"attachment; filename={project_id}_queries.csv"},
+        media_type="text/csv",
+    )
