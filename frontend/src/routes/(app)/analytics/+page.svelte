@@ -1,85 +1,381 @@
 <script lang="ts">
 	import { api } from "$lib/api";
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
-	interface Stats {
-		total_clicks: number;
-		completed_rate: number;
-		avg_position: number;
-		projects_active: number;
+	interface TimelinePoint {
+		date: string;
+		count: number;
 	}
 
-	let stats = $state<Stats | null>(null);
-	let loading = $state(true);
-	let error = $state("");
+	interface TrackingPoint {
+		position: number;
+		date: string | null;
+	}
 
-	async function loadAnalytics() {
+	interface PositionSummary {
+		best_position: number | null;
+		avg_position: number | null;
+		total_records: number;
+	}
+
+	let summaryLoading = $state(true);
+	let summaryError = $state("");
+	let stats = $state<any>(null);
+
+	let timelineLoading = $state(true);
+	let timelineData = $state<TimelinePoint[]>([]);
+
+	let trackingLoading = $state(true);
+	let trackingData = $state<TrackingPoint[]>([]);
+	let trackingSummary = $state<PositionSummary | null>(null);
+
+	// Project selector for scoped analytics
+	let projects = $state<any[]>([]);
+	let selectedProject = $state<string>("");
+	let projectLoading = $state(true);
+
+	let refreshInterval = $state<number | null>(null);
+
+	async function loadProjects() {
 		try {
-			stats = await api.analytics.summary();
-		} catch (err) {
-			error = err instanceof Error ? err.message : "Ошибка загрузки";
+			projects = await api.projects.list();
+		} catch {
+			projects = [];
 		} finally {
-			loading = false;
+			projectLoading = false;
 		}
 	}
 
-	onMount(() => { loadAnalytics(); });
+	async function loadSummary() {
+		if (selectedProject) {
+			stats = await api.analytics.summary(selectedProject);
+		} else {
+			stats = await api.analytics.summary();
+		}
+	}
+
+	async function loadTimeline() {
+		if (selectedProject) {
+			const data = await api.analytics.clicks(selectedProject);
+			timelineData = data.timeline || [];
+		} else {
+			const data = await api.analytics.clicks();
+			timelineData = data.timeline || [];
+		}
+		timelineLoading = false;
+	}
+
+	async function loadTracking() {
+		if (selectedProject) {
+			const data = await api.analytics.trackingPositions(selectedProject);
+			trackingData = data.tracking || [];
+			trackingSummary = data.summary || null;
+		} else {
+			trackingData = [];
+			trackingSummary = null;
+		}
+		trackingLoading = false;
+	}
+
+	async function loadAll() {
+		await Promise.all([
+			loadSummary(),
+			loadTimeline(),
+			loadTracking(),
+		]);
+	}
+
+	onMount(async () => {
+		await loadProjects();
+		await loadSummary();
+		await loadTimeline();
+		await loadTracking();
+
+		refreshInterval = window.setInterval(() => {
+			loadAll();
+		}, 30000); // refresh every 30s
+	});
+
+	onDestroy(() => {
+		if (refreshInterval) clearInterval(refreshInterval);
+	});
+
+	function handleProjectChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		selectedProject = target.value;
+		loadAll();
+	}
+
+	// Max count for scaling timeline chart
+	const maxTimelineCount = timelineData.length > 0
+		? Math.max(...timelineData.map(d => d.count))
+		: 1;
+
+	// Position colors helper
+	function positionClass(pos: number): string {
+		if (pos <= 3) return 'text-green-600';
+		if (pos <= 10) return 'text-blue-600';
+		return 'text-gray-500';
+	}
+
+	function positionLabel(pos: number): string {
+		if (pos <= 3) return 'Топ-3 — Отлично!';
+		if (pos <= 5) return 'Топ-5 — Хорошо';
+		if (pos <= 10) return 'Первая страница';
+		return 'Дальше работать';
+	}
+
+	function positionColor(pos: number): string {
+		if (pos <= 3) return '#16a34a'; // green-600
+		if (pos <= 5) return '#2563eb'; // blue-600
+		return '#6b7280'; // gray-500
+	}
+
+	// Format date for display
+	function formatDate(dateStr: string): string {
+		if (!dateStr) return '';
+		try {
+			return new Date(dateStr).toLocaleDateString('ru-RU');
+		} catch {
+			return dateStr;
+		}
+	}
+
+	// SVG line chart for positions
+	function renderPositionChart(): string {
+		if (trackingData.length < 2) return '';
+
+		const positions = trackingData.map(d => d.position).filter(p => p > 0);
+		if (positions.length < 2) return '';
+
+		// Sort by position ascending (lower is better in search)
+		const sorted = [...positions].sort((a, b) => a - b);
+		const minPos = Math.min(...sorted);
+		const maxPos = Math.max(...sorted);
+		const range = maxPos - minPos || 1;
+
+		const width = 600;
+		const height = 200;
+		const padding = { top: 20, right: 30, bottom: 30, left: 50 };
+		const chartW = width - padding.left - padding.right;
+		const chartH = height - padding.top - padding.bottom;
+
+		// Scale: position on Y axis (inverted — lower is higher visually)
+		// X axis: index of data point
+		const points = positions.map((pos, i) => {
+			const x = padding.left + (i / (positions.length - 1)) * chartW;
+			const y = padding.top + ((pos - minPos) / range) * chartH;
+			return `${x},${y}`;
+		}).join(' ');
+
+		// Grid lines
+		let gridLines = '';
+		for (let p = Math.ceil(minPos); p <= Math.floor(maxPos); p += Math.max(1, Math.floor(range / 5))) {
+			const y = padding.top + ((p - minPos) / range) * chartH;
+			gridLines += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>`;
+			gridLines += `<text x="${padding.left - 5}" y="${y + 4}" text-anchor="end" font-size="10" fill="#9ca3af">${p}</text>`;
+		}
+
+		// Area fill under line
+		const areaPoints = `${padding.left},${padding.top + chartH} ${points} ${padding.left + chartW},${padding.top + chartH}`;
+
+		return `
+			<svg viewBox="0 0 ${width} ${height}" class="w-full h-64" xmlns="http://www.w3.org/2000/svg">
+				${gridLines}
+				<polygon points="${areaPoints}" fill="rgba(59,130,246,0.1)"/>
+				<polyline points="${points}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+				${positions.map((pos, i) => {
+					const x = padding.left + (i / (positions.length - 1)) * chartW;
+					const y = padding.top + ((pos - minPos) / range) * chartH;
+					return `<circle cx="${x}" cy="${y}" r="4" fill="${positionColor(pos)}" stroke="#fff" stroke-width="2"/>`;
+				}).join('')}
+			</svg>
+		`;
+	}
 </script>
 
 <div class="p-6">
-	<div class="mb-6">
-		<h1 class="text-2xl font-bold text-gray-900">Аналитика</h1>
-		<p class="text-sm text-gray-500 mt-1">Статистика кликов, позиций и эффективности проектов</p>
+	<!-- Header -->
+	<div class="mb-6 flex items-center justify-between">
+		<div>
+			<h1 class="text-2xl font-bold text-gray-900">Аналитика</h1>
+			<p class="text-sm text-gray-500 mt-1">Статистика кликов, позиций и эффективности проектов</p>
+		</div>
+
+		<!-- Project selector -->
+		<select
+			value={selectedProject}
+			onchange={handleProjectChange}
+			class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+		>
+			<option value="">Все проекты</option>
+			{#each projects as project}
+				<option value={project.id}>{project.name}</option>
+			{/each}
+		</select>
 	</div>
 
-	{#if error}
-		<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{error}</div>
+	{#if summaryError}
+		<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{summaryError}</div>
 	{/if}
 
-	{#if loading}
-		<div class="text-center py-12 text-gray-400">Загрузка...</div>
-	{:else if stats}
-		<!-- Stats cards -->
-		<div class="grid grid-cols-4 gap-6 mb-8">
-			<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-				<p class="text-sm text-gray-500">Всего кликов</p>
-				<p class="text-3xl font-bold text-gray-900 mt-1">{stats.total_clicks.toLocaleString()}</p>
-			</div>
-			<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-				<p class="text-sm text-gray-500">Успешность</p>
-				<p class="text-3xl font-bold text-green-600 mt-1">{(stats.completed_rate * 100).toFixed(1)}%</p>
-			</div>
-			<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-				<p class="text-sm text-gray-500">Средняя позиция</p>
-				<p class="text-3xl font-bold text-blue-600 mt-1">{stats.avg_position}</p>
-			</div>
-			<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-				<p class="text-sm text-gray-500">Активных проектов</p>
-				<p class="text-3xl font-bold text-gray-900 mt-1">{stats.projects_active}</p>
-			</div>
+	<!-- Stats cards -->
+	<div class="grid grid-cols-4 gap-6 mb-8">
+		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+			<p class="text-sm text-gray-500">Всего кликов</p>
+			<p class="text-3xl font-bold text-gray-900 mt-1">{stats?.total_clicks?.toLocaleString() ?? '—'}</p>
 		</div>
+		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+			<p class="text-sm text-gray-500">Успешность</p>
+			<p class="text-3xl font-bold text-green-600 mt-1">
+				{stats && stats.completed_rate ? (stats.completed_rate * 100).toFixed(1) + '%' : '—'}
+			</p>
+		</div>
+		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+			<p class="text-sm text-gray-500">Средняя позиция</p>
+			<p class="text-3xl font-bold text-blue-600 mt-1">{stats?.avg_position ?? '—'}</p>
+		</div>
+		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+			<p class="text-sm text-gray-500">Активных проектов</p>
+			<p class="text-3xl font-bold text-gray-900 mt-1">{projects.length}</p>
+		</div>
+	</div>
 
-		<!-- Charts placeholder -->
-		<div class="grid grid-cols-2 gap-6">
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-				<h3 class="font-medium text-gray-900 mb-4">Клики по дням</h3>
-				<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
-					[График кликов — интеграция с D3.js]
+	<!-- Timeline chart -->
+	<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+		<h3 class="font-medium text-gray-900 mb-4">Клики по дням</h3>
+
+		{#if timelineLoading}
+			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">Загрузка...</div>
+		{:else if timelineData.length === 0}
+			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+				Нет данных о кликах. Клики начнут отображаться после выполнения первых задач.
+			</div>
+		{:else}
+			<!-- Bar chart using CSS -->
+			<div class="flex items-end gap-1 h-64 px-2">
+				{#each timelineData as point, i}
+					<div class="flex-1 flex flex-col items-center justify-end group relative">
+						<!-- Tooltip -->
+						<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+							{formatDate(point.date)}: {point.count} кликов
+						</div>
+						<!-- Bar -->
+						<div
+							class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors cursor-pointer"
+							style="height: calc(({point.count} / {maxTimelineCount}) * 100%)"
+						></div>
+					</div>
+				{/each}
+			</div>
+			<!-- Date labels (last few) -->
+			<div class="flex justify-between mt-2 text-xs text-gray-400 px-2">
+				<span>{formatDate(timelineData[0]?.date)}</span>
+				<span>{formatDate(timelineData[timelineData.length - 1]?.date)}</span>
+			</div>
+		{/if}
+	</div>
+
+	<!-- Position tracking chart -->
+	<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+		<h3 class="font-medium text-gray-900 mb-4">Отслеживание позиций</h3>
+
+		{#if trackingSummary}
+			<!-- Summary badges -->
+			<div class="flex gap-4 mb-4">
+				<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+					<span class="text-xs text-green-700">Лучшая:</span>
+					<span class="text-sm font-bold text-green-900 ml-1">#{trackingSummary.best_position}</span>
+				</div>
+				<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+					<span class="text-xs text-blue-700">Средняя:</span>
+					<span class="text-sm font-bold text-blue-900 ml-1">{trackingSummary.avg_position}</span>
+				</div>
+				<div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+					<span class="text-xs text-gray-700">Записей:</span>
+					<span class="text-sm font-bold text-gray-900 ml-1">{trackingSummary.total_records}</span>
 				</div>
 			</div>
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-				<h3 class="font-medium text-gray-900 mb-4">Гео распределение</h3>
-				<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
-					[Диаграмма по городам — интеграция с D3.js]
-				</div>
-			</div>
-		</div>
+		{/if}
 
-		<!-- Export buttons -->
-		<div class="mt-6 flex gap-3">
-			<button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-				Экспорт отчёта (CSV)
-			</button>
+		{#if trackingLoading}
+			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">Загрузка...</div>
+		{:else if selectedProject && trackingData.length > 0}
+			<!-- SVG Line chart -->
+			<div class="overflow-x-auto">
+				{@html renderPositionChart()}
+			</div>
+		{:else}
+			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+				Выберите проект для просмотра отслеживания позиций.
+			</div>
+		{/if}
+	</div>
+
+	<!-- Position history table (for selected project) -->
+	{#if selectedProject && trackingData.length > 0}
+		<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm mb-6">
+			<div class="px-6 py-4 border-b border-gray-200">
+				<h3 class="font-medium text-gray-900">История позиций</h3>
+			</div>
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead class="bg-gray-50 border-b border-gray-200">
+						<tr>
+							<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
+							<th class="px-4 py-3 text-left font-medium text-gray-600">Дата регистрации</th>
+							<th class="px-4 py-3 text-left font-medium text-gray-600">Оценка</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each trackingData.slice(-50).reverse() as point}
+							<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+								<td class="px-4 py-3">
+									<span class="font-mono font-bold {positionClass(point.position)}">#{point.position}</span>
+								</td>
+								<td class="px-4 py-3 text-gray-500">{formatDate(point.date)}</td>
+								<td class="px-4 py-3">
+									<span class="inline-flex px-2 py-1 rounded-full text-xs font-medium {
+										point.position <= 3 ? 'bg-green-100 text-green-800' :
+										point.position <= 10 ? 'bg-blue-100 text-blue-800' :
+										'bg-gray-100 text-gray-800'
+									}">
+										{positionLabel(point.position)}
+									</span>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		</div>
 	{/if}
+
+	<!-- Export buttons -->
+	<div class="flex gap-3">
+		<button
+			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+			onclick={async () => {
+				try {
+					const response = await fetch(api.analytics.clicks(selectedProject).url);
+					const data = await response.json();
+					let csv = 'Date,Clicks\n';
+					for (const point of data.timeline || []) {
+						csv += `${point.date},${point.count}\n`;
+					}
+					const blob = new Blob([csv], { type: 'text/csv' });
+					const url = URL.createObjectURL(blob);
+					const a = document.createElement('a');
+					a.href = url;
+					a.download = 'analytics_report.csv';
+					a.click();
+					URL.revokeObjectURL(url);
+				} catch (e) {
+					console.error('Export failed:', e);
+				}
+			}}
+		>
+			Экспорт отчёта (CSV)
+		</button>
+	</div>
 </div>

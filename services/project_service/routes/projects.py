@@ -1,25 +1,132 @@
-"""Project service routes — CRUD for projects and queries."""
+"""Project service routes — CRUD for projects, queries, groups and more."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.session import get_session
-from services.project_service.domain.models import Project, Query
+from services.project_service.domain.models import (
+    Project,
+    ProjectToken,
+    Query,
+    Marker,
+    Webmarker,
+    ProjectGroup,
+)
 from services.project_service.repositories.project_repo import ProjectRepository
 from services.project_service.repositories.query_repo import QueryRepository
+from services.queue_service.domain.models import QueueTask
+from services.queue_service.repositories.task_repo import QueueTaskRepository
 
 router = APIRouter(tags=["projects"])
 
 
-async def _project_repo(session: AsyncSession = Depends(get_session)) -> ProjectRepository:
+# --- helpers --------------------------------------------------------------- #
+
+async def _project_repo(
+    session: AsyncSession = Depends(get_session),
+) -> ProjectRepository:
     return ProjectRepository(session)
 
 
-async def _query_repo(session: AsyncSession = Depends(get_session)) -> QueryRepository:
+async def _query_repo(
+    session: AsyncSession = Depends(get_session),
+) -> QueryRepository:
     return QueryRepository(session)
 
+
+async def _task_repo(
+    session: AsyncSession = Depends(get_session),
+) -> QueueTaskRepository:
+    return QueueTaskRepository(session)
+
+
+# --------------------------------------------------------------------------- #
+#  Project Groups                                                             #
+# --------------------------------------------------------------------------- #
+
+@router.get("/groups")
+async def list_groups(
+    session: AsyncSession = Depends(get_session),
+):
+    """List all groups for the current user."""
+    result = await session.execute(select(ProjectGroup))
+    groups = result.scalars().all()
+    return [
+        {
+            "id": str(g.id),
+            "name": g.name,
+            "icon": g.icon or "",
+        }
+        for g in groups
+    ]
+
+
+@router.post("/groups")
+async def create_group(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new project group."""
+    group = ProjectGroup(
+        id=uuid4(),
+        name=body["name"],
+        icon=body.get("icon", ""),
+    )
+    session.add(group)
+    await session.commit()
+    await session.refresh(group)
+    return {"id": str(group.id), "name": group.name, "icon": group.icon}
+
+
+@router.put("/groups/{group_id}")
+async def update_group(
+    group_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a project group."""
+    result = await session.execute(select(ProjectGroup).where(ProjectGroup.id == UUID(group_id)))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    for key in ("name", "icon"):
+        if key in body:
+            setattr(group, key, body[key])
+    await session.commit()
+    await session.refresh(group)
+    return {"id": str(group.id), "name": group.name, "icon": group.icon}
+
+
+@router.delete("/groups/{group_id}")
+async def delete_group(
+    group_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a project group (un-assigns projects from it)."""
+    result = await session.execute(select(ProjectGroup).where(ProjectGroup.id == UUID(group_id)))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    # Un-assign all projects
+    await session.execute(
+        select(Project).where(Project.group_id == UUID(group_id))
+    )
+    projects_result = (await session.execute(
+        select(Project).where(Project.group_id == UUID(group_id))
+    )).scalars().all()
+    for p in projects_result:
+        p.group_id = None  # type: ignore[attr-defined]
+    await session.delete(group)
+    await session.commit()
+    return {"deleted": True}
+
+
+# --------------------------------------------------------------------------- #
+#  Projects                                                                   #
+# --------------------------------------------------------------------------- #
 
 @router.post("/")
 async def create_project(
@@ -27,15 +134,32 @@ async def create_project(
     project_repo: ProjectRepository = Depends(_project_repo),
 ):
     """Create a new project."""
-    from uuid import uuid4
+    user_id_raw = body.get("user_id")
+    if user_id_raw:
+        try:
+            user_id = UUID(user_id_raw)  # type: ignore[assignment]
+        except ValueError:
+            user_id = uuid4()
+    else:
+        user_id = uuid4()
+
+    group_id: UUID | None = None
+    gid = body.get("group_id")
+    if gid:
+        try:
+            group_id = UUID(gid)  # type: ignore[assignment]
+        except ValueError:
+            pass
 
     project = Project(
         id=uuid4(),
+        user_id=user_id,
         name=body["name"],
         domain=body["domain"],
         strategy_type=body.get("strategy_type", "daily"),
         daily_limit=body.get("daily_limit", 500),
         region=body.get("region"),
+        group_id=group_id,
     )
     project = await project_repo.create(project)
     return {"id": str(project.id), "name": project.name, "domain": project.domain}
@@ -43,20 +167,60 @@ async def create_project(
 
 @router.get("/")
 async def list_projects(
+    search: str | None = Query(None),
+    group_id: str | None = Query(None),
+    region: str | None = Query(None),
+    strategy_type: str | None = Query(None),
+    is_active: bool | None = Query(None),
     project_repo: ProjectRepository = Depends(_project_repo),
 ):
-    """List all projects."""
-    result = await project_repo.get_all_for_user(None)  # type: ignore[arg-type]
+    """List projects with optional filters and search."""
+    from shared.database.session import get_session as _gs  # avoid circular
+
+    session = await anext(_gs())  # type: ignore[arg-type]
+
+    stmt = select(Project)
+
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(Project.name.ilike(pattern))
+    if group_id:
+        stmt = stmt.where(Project.group_id == UUID(group_id))
+    if region:
+        stmt = stmt.where(Project.region == region)
+    if strategy_type:
+        stmt = stmt.where(Project.strategy_type == strategy_type)
+    if is_active is not None:
+        stmt = stmt.where(Project.is_active == is_active)
+
+    result = await session.execute(stmt.order_by(Project.name))
+    projects = result.scalars().all()
+
+    # Also fetch query counts and queue stats per project
+    proj_ids = [str(p.id) for p in projects]
+    counts_map: dict[str, int] = {}
+    if proj_ids:
+        q_result = await session.execute(
+            select(Query.project_id, func.count())
+            .where(Query.project_id.in_(proj_ids))  # type: ignore[arg-type]
+            .group_by(Query.project_id)
+        )
+        counts_map = {str(r[0]): r[1] for r in q_result.all()}
+
     return [
         {
             "id": str(p.id),
             "name": p.name,
             "domain": p.domain,
+            "region": p.region or "",
             "strategy_type": p.strategy_type,
             "daily_limit": p.daily_limit,
             "is_active": p.is_active,
+            "group_id": str(p.group_id) if p.group_id else None,  # type: ignore[attr-defined]
+            "group_name": p.group.name if p.group else None,  # type: ignore[attr-defined]
+            "query_count": counts_map.get(str(p.id), 0),
         }
-        for p in result
+        for p in projects
     ]
 
 
@@ -77,6 +241,10 @@ async def get_project(
         "daily_limit": project.daily_limit,
         "region": project.region,
         "is_active": project.is_active,
+        "group_id": str(project.group_id) if project.group_id else None,  # type: ignore[attr-defined]
+        "group_name": project.group.name if project.group else None,  # type: ignore[attr-defined]
+        "geo_settings": project.geo_settings or {},
+        "integrations": project.integrations or {},
     }
 
 
@@ -118,24 +286,62 @@ async def add_query(
     query_repo: QueryRepository = Depends(_query_repo),
 ):
     """Add a query (term) to a project."""
+    text = body["text"]
+
+    # Generate search click URL if not provided
+    if not body.get("click_url"):
+        import urllib.parse as _urllib
+
+        engine = body.get("search_engine", "google")
+        params = {"q": text}
+        encoded = _urllib.urlencode(params)
+        engines_map: dict[str, str] = {
+            "google": f"https://www.google.com/search?{encoded}",
+            "yandex": f"https://yandex.ru/search/?text={_urllib.quote(text)}",
+            "bing": f"https://www.bing.com/search?q={encoded}",
+        }
+        click_url = engines_map.get(engine, engines_map["google"])
+    else:
+        click_url = body["click_url"]
+
     query = Query(
         project_id=UUID(project_id),
-        text=body["text"],
+        text=text,
         url=body.get("url"),
-        click_url=body.get("click_url"),
+        click_url=click_url,
         geo=body.get("geo", {}),
     )
     query = await query_repo.create(query)
-    return {"id": str(query.id), "text": query.text}
+    return {
+        "id": str(query.id),
+        "text": query.text,
+        "url": query.url,
+        "click_url": query.click_url,
+    }
 
 
 @router.get("/{project_id}/queries")
 async def list_queries(
     project_id: str,
+    session: AsyncSession = Depends(get_session),
     query_repo: QueryRepository = Depends(_query_repo),
+    task_repo: QueueTaskRepository = Depends(_task_repo),
 ):
-    """List all queries for a project."""
+    """List all queries for a project with completed counts."""
     queries = await query_repo.get_by_project(UUID(project_id))
+
+    # Get completed count per query
+    result = await session.execute(
+        select(QueueTask.query_id, func.count())
+        .where(
+            QueueTask.project_id == UUID(project_id),
+            QueueTask.status == "completed",
+            QueueTask.query_id.isnot(None),
+        )
+        .group_by(QueueTask.query_id)
+    )
+    completed_map: dict[str, int] = {str(r[0]): r[1] for r in result.all()}
+
     return [
         {
             "id": str(q.id),
@@ -144,6 +350,317 @@ async def list_queries(
             "click_url": q.click_url,
             "geo": q.geo,
             "daily_clicks": q.daily_clicks,
+            "position": q.position,
+            "completed": completed_map.get(str(q.id), 0),
         }
         for q in queries
     ]
+
+
+@router.put("/{project_id}/queries/{query_id}")
+async def update_query(
+    project_id: str,
+    query_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a single query (inline editing: geo, daily_clicks, click_url, url)."""
+    result = await session.execute(select(Query).where(Query.id == UUID(query_id)))
+    query = result.scalar_one_or_none()
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+    # Only allowed fields
+    allowed_fields = ("geo", "daily_clicks", "click_url", "url", "position", "frequency")
+    for key in allowed_fields:
+        if key in body and hasattr(query, key):
+            setattr(query, key, body[key])
+    await session.commit()
+    await session.refresh(query)
+    return {
+        "id": str(query.id),
+        "text": query.text,
+        "url": query.url,
+        "click_url": query.click_url,
+        "geo": query.geo,
+        "daily_clicks": query.daily_clicks,
+        "frequency": query.frequency,
+    }
+
+
+@router.delete("/{project_id}/queries/{query_id}")
+async def delete_query(
+    project_id: str,
+    query_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a query from a project."""
+    result = await session.execute(select(Query).where(Query.id == UUID(query_id)))
+    query = result.scalar_one_or_none()
+    if not query or query.project_id != UUID(project_id):
+        raise HTTPException(status_code=404, detail="Query not found")
+    await session.delete(query)
+    await session.commit()
+    return {"deleted": True}
+
+
+# --- Queue stats & positions ------------------------------------------------ #
+
+@router.get("/{project_id}/queue-stats")
+async def get_queue_stats(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return queue task counts by status for a project."""
+    result = await session.execute(
+        select(QueueTask.status, func.count())
+        .where(QueueTask.project_id == UUID(project_id))
+        .group_by(QueueTask.status)
+    )
+    stats: dict[str, int] = {str(r[0]): r[1] for r in result.all()}
+    return {
+        "pending": stats.get("pending", 0),
+        "in_progress": stats.get("in_progress", 0),
+        "completed": stats.get("completed", 0),
+        "not_found": stats.get("not_found", 0),
+        "stuck": stats.get("stuck", 0),
+    }
+
+
+@router.get("/{project_id}/positions")
+async def get_positions(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return position history for queries in a project."""
+    result = await session.execute(
+        select(Query.text, QueueTask.position)
+        .join(QueueTask, Query.id == QueueTask.query_id)
+        .where(
+            Query.project_id == UUID(project_id),
+            QueueTask.status == "completed",
+            QueueTask.position.isnot(None),
+        )
+        .order_by(QueueTask.created_at)
+    )
+    history = [{"text": r[0], "position": r[1], "date": ""} for r in result.all()]
+    return {"project_id": project_id, "history": history}
+
+
+# --- Markers ---------------------------------------------------------------- #
+
+@router.get("/{project_id}/markers")
+async def list_markers(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """List markers for a project."""
+    result = await session.execute(
+        select(Marker).where(Marker.project_id == UUID(project_id))
+    )
+    markers = result.scalars().all()
+    return [
+        {
+            "id": str(m.id),
+            "name": m.name,
+            "url": m.url,
+            "css_selector": m.css_selector,
+            "description": m.description,
+            "is_active": m.is_active,
+        }
+        for m in markers
+    ]
+
+
+@router.post("/{project_id}/markers")
+async def create_marker(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new marker."""
+    from uuid import uuid4
+
+    marker = Marker(
+        id=uuid4(),
+        project_id=UUID(project_id),
+        name=body.get("name", ""),
+        url=body.get("url", ""),
+        css_selector=body.get("css_selector"),
+        description=body.get("description"),
+    )
+    session.add(marker)
+    await session.commit()
+    await session.refresh(marker)
+    return {
+        "id": str(marker.id),
+        "name": marker.name,
+        "url": marker.url,
+        "css_selector": marker.css_selector,
+        "description": marker.description,
+        "is_active": marker.is_active,
+    }
+
+
+@router.put("/{project_id}/markers/{marker_id}")
+async def update_marker(
+    project_id: str,
+    marker_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a marker."""
+    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id)))
+    marker = result.scalar_one_or_none()
+    if not marker:
+        raise HTTPException(status_code=404, detail="Marker not found")
+
+    for key in ("name", "url", "css_selector", "description", "is_active"):
+        if key in body:
+            setattr(marker, key, body[key])
+
+    await session.commit()
+    await session.refresh(marker)
+    return {
+        "id": str(marker.id),
+        "name": marker.name,
+        "url": marker.url,
+        "css_selector": marker.css_selector,
+        "description": marker.description,
+        "is_active": marker.is_active,
+    }
+
+
+@router.delete("/{project_id}/markers/{marker_id}")
+async def delete_marker(
+    project_id: str,
+    marker_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a marker."""
+    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id)))
+    marker = result.scalar_one_or_none()
+    if not marker:
+        raise HTTPException(status_code=404, detail="Marker not found")
+
+    await session.delete(marker)
+    await session.commit()
+    return {"deleted": True}
+
+
+# --- Webmarkers --------------------------------------------------------------- #
+
+@router.get("/{project_id}/webmarkers")
+async def list_webmarkers(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """List webmarkers for a project."""
+    result = await session.execute(
+        select(Webmarker).where(Webmarker.project_id == UUID(project_id))
+    )
+    wm_list = result.scalars().all()
+    return [
+        {
+            "id": str(w.id),
+            "platform": w.platform,
+            "verification_code": w.verification_code,
+            "is_verified": w.is_verified,
+            "last_sync": w.last_sync.isoformat() if w.last_sync else None,
+        }
+        for w in wm_list
+    ]
+
+
+@router.post("/{project_id}/webmarkers")
+async def create_webmarker(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new webmarker."""
+    from uuid import uuid4
+
+    webmarker = Webmarker(
+        id=uuid4(),
+        project_id=UUID(project_id),
+        platform=body.get("platform", ""),
+        verification_code=body.get("verification_code"),
+    )
+    session.add(webmarker)
+    await session.commit()
+    await session.refresh(webmarker)
+    return {
+        "id": str(webmarker.id),
+        "platform": webmarker.platform,
+        "verification_code": webmarker.verification_code,
+        "is_verified": webmarker.is_verified,
+        "last_sync": webmarker.last_sync.isoformat() if webmarker.last_sync else None,
+    }
+
+
+@router.put("/{project_id}/webmarkers/{webmarker_id}")
+async def update_webmarker(
+    project_id: str,
+    webmarker_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a webmarker."""
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    wm = result.scalar_one_or_none()
+    if not wm:
+        raise HTTPException(status_code=404, detail="Webmarker not found")
+
+    for key in ("platform", "verification_code", "is_verified"):
+        if key in body:
+            setattr(wm, key, body[key])
+
+    await session.commit()
+    await session.refresh(wm)
+    return {
+        "id": str(wm.id),
+        "platform": wm.platform,
+        "verification_code": wm.verification_code,
+        "is_verified": wm.is_verified,
+        "last_sync": wm.last_sync.isoformat() if wm.last_sync else None,
+    }
+
+
+@router.post("/{project_id}/webmarkers/{webmarker_id}/verify")
+async def verify_webmarker(
+    project_id: str,
+    webmarker_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Mark a webmarker as verified."""
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    wm = result.scalar_one_or_none()
+    if not wm:
+        raise HTTPException(status_code=404, detail="Webmarker not found")
+
+    wm.is_verified = True  # type: ignore[attr-defined]
+    from datetime import datetime, timezone
+    wm.last_sync = datetime.now(timezone.utc)
+    await session.commit()
+    return {
+        "id": str(wm.id),
+        "is_verified": wm.is_verified,  # type: ignore[attr-defined]
+        "last_sync": wm.last_sync.isoformat() if wm.last_sync else None,
+    }
+
+
+@router.delete("/{project_id}/webmarkers/{webmarker_id}")
+async def delete_webmarker(
+    project_id: str,
+    webmarker_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a webmarker."""
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    wm = result.scalar_one_or_none()
+    if not wm:
+        raise HTTPException(status_code=404, detail="Webmarker not found")
+
+    await session.delete(wm)
+    await session.commit()
+    return {"deleted": True}

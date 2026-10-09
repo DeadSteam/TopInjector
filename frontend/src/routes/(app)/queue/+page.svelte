@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from "$lib/api";
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	interface QueueTask {
 		id: string;
@@ -10,6 +10,7 @@
 		status: 'pending' | 'in_progress' | 'completed' | 'not_found' | 'stuck';
 		geo: any;
 		created_at: string;
+		position?: number;
 	}
 
 	let tasks = $state<QueueTask[]>([]);
@@ -17,6 +18,10 @@
 	let loading = $state(true);
 	let error = $state("");
 	let stats = $state({ pending: 0, in_progress: 0, completed: 0, not_found: 0, stuck: 0 });
+	let isConnected = $state(false);
+	let lastUpdate = $state<string>("");
+	let projectId = $state("");
+	let eventSource: EventSource | null = null;
 
 	const statusColors: Record<string, string> = {
 		pending: 'bg-yellow-100 text-yellow-800',
@@ -45,13 +50,7 @@
 			let statusFilter = filterStatus === "all" ? undefined : filterStatus;
 			const data = await api.queue.list(undefined, statusFilter);
 			tasks = data.tasks || [];
-			stats = {
-				pending: tasks.filter(t => t.status === 'pending').length,
-				in_progress: tasks.filter(t => t.status === 'in_progress').length,
-				completed: tasks.filter(t => t.status === 'completed').length,
-				not_found: tasks.filter(t => t.status === 'not_found').length,
-				stuck: tasks.filter(t => t.status === 'stuck').length,
-			};
+			updateStats();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки";
 		} finally {
@@ -59,20 +58,107 @@
 		}
 	}
 
-	onMount(() => { loadQueue(); });
+	function updateStats() {
+		stats = {
+			pending: tasks.filter(t => t.status === 'pending').length,
+			in_progress: tasks.filter(t => t.status === 'in_progress').length,
+			completed: tasks.filter(t => t.status === 'completed').length,
+			not_found: tasks.filter(t => t.status === 'not_found').length,
+			stuck: tasks.filter(t => t.status === 'stuck').length,
+		};
+		lastUpdate = new Date().toLocaleTimeString('ru-RU');
+	}
+
+	function startSSE() {
+		stopSSE();
+		const url = api.queue.feed(projectId || undefined).url;
+		eventSource = new EventSource(url);
+
+		eventSource.onopen = () => {
+			isConnected = true;
+			console.log("SSE connected");
+		};
+
+		eventSource.addEventListener('stats', (e: any) => {
+			try {
+				const data = JSON.parse(e.data);
+				if (data.type === 'stats') {
+					stats = data.data;
+					lastUpdate = new Date().toLocaleTimeString('ru-RU');
+				}
+			} catch {
+				// ignore parse errors
+			}
+		});
+
+		eventSource.onerror = () => {
+			isConnected = false;
+			eventSource?.close();
+			eventSource = null;
+		};
+	}
+
+	function stopSSE() {
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+		isConnected = false;
+	}
+
+	async function clearPending() {
+		if (!confirm("Очистить все ожидающие задачи?")) return;
+		try {
+			await api.queue.clear("");
+			await loadQueue();
+		} catch (err) {
+			error = err instanceof Error ? err.message : "Ошибка очистки";
+		}
+	}
+
+	let refreshInterval: number | null = null;
+
+	onMount(() => {
+		loadQueue();
+		startSSE();
+		refreshInterval = window.setInterval(() => {
+			loadQueue();
+		}, 15000); // Poll every 15s as fallback
+	});
+
+	onDestroy(() => {
+		stopSSE();
+		if (refreshInterval) clearInterval(refreshInterval);
+	});
 
 	function refresh() { loadQueue(); }
+
+	const filteredTasks = $derived(
+		filterStatus === "all" ? tasks : tasks.filter(t => t.status === filterStatus)
+	);
 </script>
 
 <div class="p-6">
 	<div class="flex items-center justify-between mb-6">
 		<div>
 			<h1 class="text-2xl font-bold text-gray-900">Очередь задач</h1>
-			<p class="text-sm text-gray-500 mt-1">Мониторинг выполнения задач в реальном времени</p>
+			<p class="text-sm text-gray-500 mt-1">Мониторинг выполнения в реальном времени</p>
 		</div>
-		<button onclick={refresh} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-			Обновить
-		</button>
+		<div class="flex items-center gap-3">
+			<div class="flex items-center gap-2">
+				<span class="w-2 h-2 rounded-full {isConnected ? 'bg-green-500' : 'bg-red-500'}"></span>
+				<span class="text-xs text-gray-500">{isConnected ? 'Онлайн' : 'Оффлайн'}</span>
+			</div>
+			{#if lastUpdate}
+				<span class="text-xs text-gray-400">Обновлено: {lastUpdate}</span>
+			{/if}
+			<button onclick={refresh} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+				Обновить
+			</button>
+			<button onclick={clearPending} class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors">
+				Очистить pending
+			</button>
+		</div>
 	</div>
 
 	{#if error}
@@ -106,6 +192,10 @@
 				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterStatus === 'in_progress' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
 				Выполняется
 			</button>
+			<button onclick={() => { filterStatus = 'completed'; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterStatus === 'completed' ? 'bg-green-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+				Завершённые
+			</button>
 		</div>
 
 		<!-- Task list -->
@@ -118,18 +208,30 @@
 							<th class="px-4 py-3 text-left font-medium text-gray-600">URL</th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Источник</th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Статус</th>
-							<th class="px-4 py-3 text-left font-medium text-gray-600">Гео</th>
+							<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Создана</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each tasks as task}
+						{#each filteredTasks as task}
 							<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
 								<td class="px-4 py-3 font-mono text-xs">{task.id.slice(0, 8)}</td>
 								<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={task.click_url} target="_blank" class="hover:underline">{task.click_url}</a></td>
 								<td class="px-4 py-3"><span class="text-xs bg-gray-100 px-2 py-1 rounded">{sourceLabels[task.source] || task.source}</span></td>
 								<td class="px-4 py-3"><span class="inline-flex px-2 py-1 rounded-full text-xs font-medium {statusColors[task.status]}">{statusLabels[task.status]}</span></td>
-								<td class="px-4 py-3 text-gray-600">{task.geo ? JSON.stringify(task.geo) : '—'}</td>
+								<td class="px-4 py-3">
+									{#if task.position}
+										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+											task.position <= 3 ? 'bg-green-100 text-green-800' :
+											task.position <= 10 ? 'bg-blue-100 text-blue-800' :
+											'bg-gray-100 text-gray-800'
+										}`}>
+											#{task.position}
+										</span>
+									{:else}
+										<span class="text-gray-400">—</span>
+									{/if}
+								</td>
 								<td class="px-4 py-3 text-gray-500 text-xs">{new Date(task.created_at).toLocaleString('ru-RU')}</td>
 							</tr>
 						{/each}
@@ -137,8 +239,10 @@
 				</table>
 			</div>
 
-			{#if tasks.length === 0}
-				<div class="px-4 py-12 text-center text-gray-400">Нет задач в очереди</div>
+			{#if filteredTasks.length === 0}
+				<div class="px-4 py-12 text-center text-gray-400">
+					{filterStatus === 'all' ? 'Нет задач в очереди' : `Нет задач со статусом "${statusLabels[filterStatus]}"`}
+				</div>
 			{/if}
 		</div>
 	{/if}

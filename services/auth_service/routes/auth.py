@@ -1,5 +1,6 @@
-"""Auth service routes — login, register, token refresh."""
+"""Auth service routes — login, register, token refresh, email verification."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from services.auth_service.domain.schemas import (
     TokenResponse,
     RefreshRequest,
 )
+from shared.email.sender import send_verification_email
 
 router = APIRouter(tags=["auth"])
 
@@ -64,10 +66,16 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
         email=body.email,
         password_hash=_hash_password(body.password),
         display_name=body.display_name,
+        is_verified=False,  # requires email verification
     )
     session.add(user)
     await session.commit()
     await session.refresh(user)
+
+    # Send verification email (non-blocking)
+    verify_token = _create_access_token(str(user.id))
+    verify_url = f"{settings.frontend_url or 'http://localhost:5173'}/verify-email?token={verify_token}&email={body.email}"
+    asyncio.create_task(send_verification_email(body.email, verify_url))
 
     return TokenResponse(
         access_token=_create_access_token(str(user.id)),
@@ -114,6 +122,31 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
         access_token=_create_access_token(str(user.id)),
         refresh_token=_create_refresh_token(str(user.id)),
     )
+
+
+@router.post("/verify-email")
+async def verify_email(token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)):
+    """Verify user email using JWT token."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user_id = payload["sub"]
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_verified:
+        return {"message": "Email already verified"}
+
+    user.is_verified = True
+    await session.commit()
+
+    return {"message": "Email verified successfully"}
 
 
 @router.get("/me")

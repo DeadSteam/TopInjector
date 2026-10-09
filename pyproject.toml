@@ -17,6 +17,8 @@ dependencies = [
     "httpx>=0.28.0",
     "aio-pika>=9.5.0",
     "celery>=5.4.0",
+    "django-celery-beat>=2.7.0",
+    "supervisor>=4.3.0",
     "python-multipart>=0.0.20",
 ]
 

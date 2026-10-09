@@ -1,14 +1,23 @@
 <script lang="ts">
 	import "../app.css";
 	import { page } from '$app/stores';
+	import { api } from "$lib/api";
 	import { onMount } from 'svelte';
 
 	let activeRoute = $state("");
 	let user = $state<any>(null);
 
-	onMount(() => {
+	onMount(async () => {
 		const token = localStorage.getItem("token");
 		if (!token) {
+			window.location.href = "/login";
+			return;
+		}
+		try {
+			user = await api.users.profile();
+		} catch {
+			localStorage.removeItem("token");
+			localStorage.removeItem("refresh_token");
 			window.location.href = "/login";
 		}
 		activeRoute = window.location.pathname;
@@ -28,9 +37,7 @@
 	}
 
 	function handleLogout() {
-		localStorage.removeItem("token");
-		localStorage.removeItem("refresh_token");
-		window.location.href = "/login";
+		api.auth.logout();
 	}
 </script>
 

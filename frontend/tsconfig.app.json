@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["./src/lib/*"],
+      "$app/*": ["./.svelte-types/app/*"]
+    }
+  },
+  "include": [
+    "src/**/*.svelte",
+    "src/**/*.ts",
+    "src/**/*.js",
+    "vite.config.ts",
+    ".svelte-kit/**/*.d.ts"
+  ]
+}

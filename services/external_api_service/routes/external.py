@@ -401,13 +401,158 @@ async def set_balance(
 
 # --- Boosts & Groups -------------------------------------------------------- #
 
-@router.get("/project-groups")
-async def list_project_groups(x_auth_token: str = Header(default=None)):
-    """List project groups."""
-    return []
-
-
 @router.get("/boosts")
-async def list_boosts(project_id: str = "", x_auth_token: str = Header(default=None)):
+async def list_boosts(
+    project_id: str = "",
+    x_auth_token: str = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+):
     """List boosts for a project."""
-    return []
+    if not x_auth_token:
+        return {"boosts": [], "total": 0}
+
+    result = await session.execute(select(ProjectToken).where(ProjectToken.token_string == x_auth_token))
+    token_record = result.scalar_one_or_none()
+    if not token_record or not project_id:
+        return {"boosts": [], "total": 0}
+
+    pid = UUID(project_id)
+    from services.project_service.domain.models import Query as _Query
+    q_result = await session.execute(select(_Query).where(_Query.project_id == pid))
+    queries = q_result.scalars().all()
+
+    boosts = []
+    for q in queries:
+        if q.boost_min is not None and q.boost_max is not None:
+            boosts.append({
+                "id": str(q.id),
+                "query_text": q.text,
+                "boost_min": q.boost_min,
+                "boost_max": q.boost_max,
+                "frequency": q.frequency,
+            })
+
+    return {"boosts": boosts, "total": len(boosts)}
+
+
+@router.post("/boosts")
+async def create_boost(
+    body: dict,
+    x_auth_token: str = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Create or update a boost for a query."""
+    if not x_auth_token:
+        raise HTTPException(status_code=401, detail="Missing X-Auth-Token header")
+
+    result = await session.execute(select(ProjectToken).where(ProjectToken.token_string == x_auth_token))
+    token_record = result.scalar_one_or_none()
+    if not token_record:
+        raise HTTPException(status_code=401, detail="Invalid API token")
+
+    query_text = body.get("query_text", "")
+    boost_min = body.get("boost_min", 5)
+    boost_max = body.get("boost_max", 10)
+
+    q_result = await session.execute(select(Query).where(
+        Query.project_id == token_record.project_id,
+        Query.text == query_text,
+    ))
+    query = q_result.scalar_one_or_none()
+
+    if not query:
+        query = Query(
+            project_id=token_record.project_id,
+            text=query_text,
+            url=body.get("url"),
+            click_url=body.get("click_url"),
+        )
+        session.add(query)
+        await session.flush()
+
+    query.boost_min = boost_min  # type: ignore[attr-defined]
+    query.boost_max = boost_max  # type: ignore[attr-defined]
+    query.frequency = body.get("frequency", query.frequency)  # type: ignore[attr-defined]
+
+    await session.commit()
+    return {
+        "id": str(query.id),
+        "query_text": query.text,
+        "boost_min": query.boost_min,  # type: ignore[attr-defined]
+        "boost_max": query.boost_max,  # type: ignore[attr-defined]
+    }
+
+
+@router.get("/project-groups")
+async def list_project_groups(
+    x_auth_token: str = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """List project groups for the token owner."""
+    if not x_auth_token:
+        return {"groups": [], "total": 0}
+
+    result = await session.execute(select(ProjectToken).where(ProjectToken.token_string == x_auth_token))
+    token_record = result.scalar_one_or_none()
+    if not token_record:
+        return {"groups": [], "total": 0}
+
+    project_result = await session.execute(
+        select(Project).where(Project.id == token_record.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
+        return {"groups": [], "total": 0}
+
+    return {
+        "groups": [{
+            "id": str(project.id),
+            "name": project.name,
+            "domain": project.domain,
+            "query_count": len(project.queries),  # type: ignore[arg-type]
+        }],
+        "total": 1,
+    }
+
+
+@router.get("/external/status")
+async def external_status(
+    x_auth_token: str = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get external API status and project info."""
+    if not x_auth_token:
+        return {"status": "ok", "project": None}
+
+    result = await session.execute(select(ProjectToken).where(ProjectToken.token_string == x_auth_token))
+    token_record = result.scalar_one_or_none()
+    if not token_record:
+        return {"status": "ok", "project": None}
+
+    project_result = await session.execute(
+        select(Project).where(Project.id == token_record.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
+        return {"status": "ok", "project": None}
+
+    tasks_result = await session.execute(
+        select(QueueTask.status, func.count())
+        .where(QueueTask.project_id == project.id)
+        .group_by(QueueTask.status)
+    )
+    stats = {str(r[0]): r[1] for r in tasks_result.all()}
+
+    return {
+        "status": "ok",
+        "project": {
+            "id": str(project.id),
+            "name": project.name,
+            "domain": project.domain,
+            "queue_stats": {
+                "pending": stats.get("pending", 0),
+                "in_progress": stats.get("in_progress", 0),
+                "completed": stats.get("completed", 0),
+            },
+        },
+    }

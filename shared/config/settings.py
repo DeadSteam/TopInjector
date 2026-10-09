@@ -50,9 +50,18 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:4173"]
+    frontend_url: str = "http://localhost:5173"
 
     # Logging
     log_level: str = "INFO"
+
+    # Email (SMTP)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    email_enabled: bool = False
 
 
 settings = Settings()

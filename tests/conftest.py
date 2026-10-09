@@ -43,7 +43,8 @@ async def session(session_factory):
 
 
 @pytest_asyncio.fixture
-async def app(session_factory):
+async def app_fixture(session_factory):
+    """FastAPI app with session override and exposed session_factory for test helpers."""
     app = create_app()
 
     async def _override_session():
@@ -51,12 +52,13 @@ async def app(session_factory):
             yield session
 
     app.dependency_overrides[get_session] = _override_session
+    app.state.session_factory = session_factory
     return app
 
 
 @pytest_asyncio.fixture
-async def client(app):
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+async def client(app_fixture):
+    async with AsyncClient(transport=ASGITransport(app=app_fixture), base_url="http://test") as client:
         yield client
 
 
