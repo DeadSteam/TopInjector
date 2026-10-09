@@ -23,6 +23,7 @@
 		queue_pending?: number;
 		not_found?: number;
 		stuck?: number;
+		is_delegate?: boolean;
 	}
 
 	let projects = $state<Project[]>([]);
@@ -383,7 +384,10 @@
 									{/if}
 								</td>
 								<td class="px-4 py-3">
-									<a href="/projects/{project.id}" class="font-medium text-blue-600 hover:text-blue-700">
+									<a href="/projects/{project.id}" class="font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1.5">
+										{#if project.is_delegate}
+											<span class="w-2 h-2 rounded-full bg-yellow-400" title="Делегированный доступ"></span>
+										{/if}
 										{project.name}
 									</a>
 								</td>

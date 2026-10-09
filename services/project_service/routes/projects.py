@@ -208,6 +208,17 @@ async def list_projects(
         )
         counts_map = {str(r[0]): r[1] for r in q_result.all()}
 
+    # Check delegation: build set of project IDs the current user is a delegate for
+    delegated_ids: set[str] = set()
+    from shared.database.session import get_session as _gs  # avoid circular
+    delegate_session = await anext(_gs())
+    if proj_ids:
+        del_result = await delegate_session.execute(
+            select(ProjectDelegate.project_id)
+            .where(ProjectDelegate.project_id.in_(proj_ids))  # type: ignore[arg-type]
+        )
+        delegated_ids = {str(r[0]) for r in del_result.all()}
+
     return [
         {
             "id": str(p.id),
@@ -220,6 +231,7 @@ async def list_projects(
             "group_id": str(p.group_id) if p.group_id else None,  # type: ignore[attr-defined]
             "group_name": p.group.name if p.group else None,  # type: ignore[attr-defined]
             "query_count": counts_map.get(str(p.id), 0),
+            "is_delegate": str(p.id) in delegated_ids,
         }
         for p in projects
     ]
