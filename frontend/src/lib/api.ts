@@ -219,6 +219,8 @@ export const api = {
 		list: () => fetcher("/api/notifications/"),
 		markRead: (id: string) =>
 			fetcher(`/api/notifications/${id}/read`, { method: "POST" }),
+		markAllRead: () =>
+			fetcher("/api/notifications/mark-all-read", { method: "POST" }),
 	},
 	external: {
 		getToken: () => localStorage.getItem("external_token") || "",
