@@ -127,6 +127,13 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/queries/${queryId}`, {
 				method: "DELETE",
 			}),
+		boost: (projectId: string, data: any) =>
+			fetcher(`/api/projects/${projectId}/boost`, {
+				method: "POST",
+				body: JSON.stringify(data),
+			}),
+		requestTable: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/request-table`),
 		queueStats: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/queue-stats`),
 		queueStatsBySource: (projectId: string) =>

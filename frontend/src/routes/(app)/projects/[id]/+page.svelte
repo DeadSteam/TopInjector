@@ -56,6 +56,13 @@
 	// Selection
 	let selectedQueryIds = new Set<string>();
 
+	// Boost modal
+	let showBoost = $state(false);
+	let boostDailyClicks = $state(10);
+	let boostInterval = $state(3600);
+	let boostStartFromNow = $state(true);
+	let boostLoading = $state(false);
+
 	const statusColors: Record<string, string> = {
 		pending: 'bg-yellow-100 text-yellow-800',
 		in_progress: 'bg-blue-100 text-blue-800',
@@ -234,8 +241,25 @@
 		}
 	}
 
-	// Delete query
-	async function deleteQuery(queryId: string) {
+	async function sendBoost() {
+		if (selectedQueryIds.size === 0 || boostLoading) return;
+		boostLoading = true;
+		try {
+			await api.projects.boost(projectId, {
+				query_ids: [...selectedQueryIds],
+				daily_clicks: Math.max(1, boostDailyClicks),
+				interval_seconds: boostInterval,
+				start_from_now: boostStartFromNow,
+			});
+			showBoost = false;
+			await loadQueries();
+			await loadQueueStats();
+			selectedQueryIds.clear();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка буста"; }
+		boostLoading = false;
+	}
+
+	function deleteQuery(queryId: string) {
 		if (!confirm("Удалить запрос?")) return;
 		try {
 			await api.projects.deleteQuery(projectId, queryId);
@@ -381,13 +405,13 @@
 						<button type="submit" class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Добавить</button>
 					</form>
 					<div class="flex items-center gap-2">
-						<button onclick={() => { proklikMode = "all"; showProklik = true; }} class="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium">Проклик</button>
 						{#if selectedQueryIds.size > 0}
-							<button onclick={() => { proklikMode = "selected"; proklikQueries = [...selectedQueryIds]; showProklik = true; }} class="px-3 py-1.5 text-sm bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition-colors">Проклик (выбранные: {selectedQueryIds.size})</button>
-							<button onclick={selectAll} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Снять все</button>
+							<button onclick={() => { boostDailyClicks = queries.length > 0 ? Math.max(...queries.filter(q => selectedQueryIds.has(q.id)).map(q => q.daily_clicks)) : 10; showBoost = true; }} class="px-3 py-1.5 text-sm bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium">Буст (выбранные: {selectedQueryIds.size})</button>
+							<button onclick={() => selectedQueryIds.clear()} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Снять все</button>
 						{:else}
 							<button onclick={selectAll} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Выбрать все</button>
 						{/if}
+						<button onclick={() => { proklikMode = "all"; showProklik = true; }} class="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium">Проклик</button>
 					</div>
 				</div>
 
@@ -659,6 +683,39 @@
 				<button onclick={() => showProklik = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
 				<button onclick={sendProklik} disabled={proklikLoading} class="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white rounded-lg text-sm font-medium transition-colors">
 					{proklikLoading ? 'Отправка…' : 'Отправить проклик'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Boost modal -->
+{#if showBoost && project}
+	<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showBoost = false; }}>
+		<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md m-4">
+			<h3 class="text-lg font-semibold text-gray-900 mb-1">Буст — ускоренный прогон</h3>
+			<p class="text-sm text-gray-500 mb-4">Выбранные: {selectedQueryIds.size} запросов</p>
+
+			<div class="space-y-3">
+				<div>
+					<label class="block text-sm font-medium text-gray-700 mb-1">Кликов в день на каждый запрос</label>
+					<input type="number" bind:value={boostDailyClicks} min="1" max="10000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+				</div>
+				<div>
+					<label class="block text-sm font-medium text-gray-700 mb-1">Интервал между кликами (секунды)</label>
+					<input type="number" bind:value={boostInterval} min="60" max="86400" step="60" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+					<p class="text-xs text-gray-400 mt-1">Минимум 60 секунд. Например, 3600 = 1 клик/час</p>
+				</div>
+				<div class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={boostStartFromNow} id="boost_now" class="rounded border-gray-300 text-orange-600 focus:ring-orange-500" />
+					<label for="boost_now" class="text-sm text-gray-700">Начать расписание с сейчас, иначе — с завтра</label>
+				</div>
+			</div>
+
+			<div class="flex justify-end gap-2 mt-5">
+				<button onclick={() => showBoost = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+				<button onclick={sendBoost} disabled={boostLoading || selectedQueryIds.size === 0} class="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors">
+					{boostLoading ? 'Буст...' : `Запустить буст (${selectedQueryIds.size} запросов)`}
 				</button>
 			</div>
 		</div>

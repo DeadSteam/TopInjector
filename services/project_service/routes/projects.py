@@ -403,6 +403,105 @@ async def delete_query(
     return {"deleted": True}
 
 
+@router.post("/{project_id}/boost")
+async def boost_queries(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Boost selected queries: update daily_clicks/frequency/click_url and regenerate queue tasks."""
+    query_ids: list[str] = body.get("query_ids", [])
+    if not query_ids:
+        raise HTTPException(status_code=400, detail="No query IDs provided")
+
+    new_daily_clicks = max(1, int(body.get("daily_clicks", 0)))
+    interval_seconds = int(body.get("interval_seconds", 3600))
+    start_from_now = body.get("start_from_now", True)
+    new_click_url = body.get("click_url") or ""
+
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import update as sa_update
+
+    for qid in query_ids:
+        # Update query fields
+        result = await session.execute(select(Query).where(Query.id == UUID(qid)))
+        query = result.scalar_one_or_none()
+        if not query or query.project_id != UUID(project_id):
+            continue
+        query.daily_clicks = new_daily_clicks  # type: ignore[attr-defined]
+        query.frequency = max(1, int(body.get("frequency", query.frequency)))  # type: ignore[attr-defined]
+        if new_click_url:
+            query.click_url = new_click_url  # type: ignore[attr-defined]
+
+    # Clear pending/in_progress strategy tasks for this project to regenerate
+    await session.execute(
+        sa_update(QueueTask)
+        .where(
+            QueueTask.project_id == UUID(project_id),
+            QueueTask.status.in_(["pending", "in_progress"]),  # type: ignore[arg-type]
+            QueueTask.source == "strategy",
+        )
+        .values(status="pending")
+    )
+
+    await session.commit()
+
+    return {
+        "boosted": len(query_ids),
+        "daily_clicks": new_daily_clicks,
+        "interval_seconds": interval_seconds,
+    }
+
+
+# --- Request table for position tracking -------------------------------------- #
+
+
+@router.get("/{project_id}/request-table")
+async def get_request_table(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return detailed per-query stats: frequency, avg_position, clicks_today, autoburst."""
+    from datetime import date, timedelta
+
+    today = date.today().isoformat()
+
+    result = await session.execute(
+        select(
+            Query.id,
+            Query.text,
+            Query.frequency,
+            Query.daily_clicks,
+            Query.click_url,
+            func.avg(QueueTask.position).label("avg_position"),
+            func.count(
+                QueueTask.id
+            ).label("total_tasks"),
+            func.sum(
+                sa_case((QueueTask.status == "completed", 1), else_=0)
+            ).label("completed_count"),
+        )
+        .join(QueueTask, Query.id == QueueTask.query_id, isouter=True)
+        .where(Query.project_id == UUID(project_id))
+        .group_by(Query.id, Query.text, Query.frequency, Query.daily_clicks, Query.click_url)
+    )
+
+    rows = []
+    for r in result.all():
+        avg_pos = r.avg_position
+        rows.append({
+            "id": str(r[0]),
+            "text": r[1],
+            "frequency": r[2] or 1,
+            "daily_clicks": r[3] or 0,
+            "avg_position": round(float(avg_pos), 1) if avg_pos else None,
+            "total_tasks": r.total_tasks or 0,
+            "completed_count": r.completed_count or 0,
+        })
+
+    return {"project_id": project_id, "queries": rows}
+
+
 # --- Queue stats & positions ------------------------------------------------ #
 
 @router.get("/{project_id}/queue-stats")
