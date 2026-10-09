@@ -140,6 +140,8 @@ export const api = {
 			fetcher(`/api/queue/stats/source?project_id=${projectId}`),
 		positions: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/positions`),
+		trend: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/trend`),
 		markers: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/markers`),
 		createMarker: (projectId: string, data: any) =>
@@ -158,6 +160,12 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/webmarkers/${webmarkerId}/verify`, { method: "POST" }),
 		deleteWebmarker: (projectId: string, webmarkerId: string) =>
 			fetcher(`/api/projects/${projectId}/webmarkers/${webmarkerId}`, { method: "DELETE" }),
+		delegates: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/delegates`),
+		addDelegate: (projectId: string, data: any) =>
+			fetcher(`/api/projects/${projectId}/delegates`, { method: "POST", body: JSON.stringify(data) }),
+		removeDelegate: (projectId: string, delegateUserId: string) =>
+			fetcher(`/api/projects/${projectId}/delegates/${delegateUserId}`, { method: "DELETE" }),
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),

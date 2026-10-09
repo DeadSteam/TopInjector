@@ -97,6 +97,27 @@ class ProjectToken(UUIDModel):
     )
 
 
+class ProjectDelegate(UUIDModel):
+    """Delegated access to a project for another user."""
+
+    __tablename__ = "project_delegates"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    delegate_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    inviter_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="view")  # view / edit
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "delegate_user_id", name="uq_project_delegate"),
+    )
+
+
 class Marker(UUIDModel):
     """Visual marker for tracking a page or section on a website."""
 

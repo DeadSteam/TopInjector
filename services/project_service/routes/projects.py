@@ -14,6 +14,7 @@ from services.project_service.domain.models import (
     Marker,
     Webmarker,
     ProjectGroup,
+    ProjectDelegate,
 )
 from services.project_service.repositories.project_repo import ProjectRepository
 from services.project_service.repositories.query_repo import QueryRepository
@@ -545,6 +546,64 @@ async def get_positions(
     return {"project_id": project_id, "history": history}
 
 
+# --- Position trend data ---------------------------------------------------- #
+
+@router.get("/{project_id}/trend")
+async def get_position_trend(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return aggregated daily position averages per query for trend chart."""
+    from datetime import date
+
+    result = await session.execute(
+        select(
+            Query.text,
+            QueueTask.position,
+            func.cast(QueueTask.created_at.func.date(), sa_text("DATE")).label("day"),
+        )
+        .join(QueueTask, Query.id == QueueTask.query_id)
+        .where(
+            Query.project_id == UUID(project_id),
+            QueueTask.status == "completed",
+            QueueTask.position.isnot(None),
+        )
+    )
+
+    # Aggregate into per-query daily averages
+    from collections import defaultdict
+
+    agg: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    query_texts: set[str] = set()
+    for text_val, pos_val, day_val in result.all():
+        if text_val is None or pos_val is None or day_val is None:
+            continue
+        agg[text_val][str(day_val)].append(float(pos_val))
+        query_texts.add(text_val)
+
+    # Build trend lines sorted by date
+    from datetime import date as _date
+    all_days: list[str] = sorted(agg.keys()) if any(agg.values()) else []
+    # Actually need to collect all unique days across ALL queries
+    all_day_set: set[str] = set()
+    for q in agg.values():
+        all_day_set.update(q.keys())
+    all_days = sorted(all_day_set)
+
+    lines: list[dict] = []
+    for txt in sorted(query_texts):
+        data_points: list[dict] = []
+        if txt in agg:
+            for day_str in all_days:
+                vals = agg[txt].get(day_str, [])
+                if vals:
+                    avg_val = sum(vals) / len(vals)
+                    data_points.append({"date": day_str, "position": round(avg_val, 2)})
+        lines.append({"text": txt, "data": data_points})
+
+    return {"project_id": project_id, "lines": lines}
+
+
 # --- Markers ---------------------------------------------------------------- #
 
 @router.get("/{project_id}/markers")
@@ -761,5 +820,91 @@ async def delete_webmarker(
         raise HTTPException(status_code=404, detail="Webmarker not found")
 
     await session.delete(wm)
+    await session.commit()
+    return {"deleted": True}
+
+
+# --- Project Delegates -------------------------------------------------------- #
+
+@router.get("/{project_id}/delegates")
+async def list_delegates(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """List delegates for a project."""
+    from services.project_service.domain.models import User  # avoid circular if needed
+
+    result = await session.execute(
+        select(ProjectDelegate)
+        .where(ProjectDelegate.project_id == UUID(project_id))
+    )
+    delegates = result.scalars().all()
+    return [
+        {
+            "id": str(d.id),
+            "delegate_user_id": str(d.delegate_user_id),
+            "inviter_user_id": str(d.inviter_user_id),
+            "role": d.role,
+        }
+        for d in delegates
+    ]
+
+
+@router.post("/{project_id}/delegates")
+async def add_delegate(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Add a delegate to a project."""
+    delegate_uid = UUID(body["delegate_user_id"])
+    role = body.get("role", "view")
+
+    existing = await session.execute(
+        select(ProjectDelegate)
+        .where(
+            ProjectDelegate.project_id == UUID(project_id),
+            ProjectDelegate.delegate_user_id == delegate_uid,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="User already a delegate")
+
+    invite = ProjectDelegate(
+        id=uuid4(),
+        project_id=UUID(project_id),
+        delegate_user_id=delegate_uid,
+        inviter_user_id=body.get("inviter_user_id"),
+        role=role,
+    )
+    session.add(invite)
+    await session.commit()
+    await session.refresh(invite)
+    return {
+        "id": str(invite.id),
+        "delegate_user_id": str(invite.delegate_user_id),
+        "role": invite.role,
+    }
+
+
+@router.delete("/{project_id}/delegates/{delegate_uid}")
+async def remove_delegate(
+    project_id: str,
+    delegate_uid: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove a delegate from a project."""
+    result = await session.execute(
+        select(ProjectDelegate)
+        .where(
+            ProjectDelegate.project_id == UUID(project_id),
+            ProjectDelegate.delegate_user_id == UUID(delegate_uid),
+        )
+    )
+    invite = result.scalar_one_or_none()
+    if not invite:
+        raise HTTPException(status_code=404, detail="Delegate not found")
+
+    await session.delete(invite)
     await session.commit()
     return {"deleted": True}

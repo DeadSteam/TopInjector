@@ -30,6 +30,17 @@
 
 	// Positions data
 	let positionsData = $state<any[]>([]);
+	let trendLines = $state<any[]>([]);
+	let showChart = $state(true);
+	let chartHoverQuery = $state<string | null>(null);
+
+	// Request table stats
+	let requestTableData = $state<any[]>([]);
+
+	// Delegates
+	let delegates = $state<any[]>([]);
+	let newDelegateUserId = $state("");
+	let newDelegateRole = $state("view");
 
 	// Markers
 	let markersData = $state<any[]>([]);
@@ -118,6 +129,41 @@
 			const data = await api.projects.positions(projectId);
 			positionsData = data.history || [];
 		} catch { positionsData = []; }
+		await loadTrend();
+	}
+
+	async function loadTrend() {
+		try {
+			const data = await api.projects.trend(projectId);
+			trendLines = data.lines || [];
+		} catch { trendLines = []; }
+	}
+
+	async function loadRequestTable() {
+		try {
+			const data = await api.projects.requestTable(projectId);
+			requestTableData = data.queries || [];
+		} catch { requestTableData = []; }
+	}
+
+	async function loadDelegates() {
+		try { delegates = await api.projects.delegates(projectId); } catch { delegates = []; }
+	}
+
+	async function addDelegate() {
+		if (!newDelegateUserId.trim()) return;
+		try {
+			await api.projects.addDelegate(projectId, { delegate_user_id: newDelegateUserId.trim(), role: newDelegateRole });
+			newDelegateUserId = "";
+			newDelegateRole = "view";
+			await loadDelegates();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка добавления делегата"; }
+	}
+
+	async function removeDelegate(userId: string) {
+		if (!confirm("Убрать доступ?")) return;
+		try { await api.projects.removeDelegate(projectId, userId); await loadDelegates(); }
+		catch (err) { error = err instanceof Error ? err.message : "Ошибка удаления"; }
 	}
 
 	async function loadMarkers() {
@@ -268,6 +314,94 @@
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка удаления запроса"; }
 	}
 
+	function toggleChartView() { showChart = !showChart; }
+
+	function getChartDims() {
+		const containerW = 700;
+		const containerH = 320;
+		const marginL = 50;
+		const marginR = 20;
+		const marginT = 20;
+		const marginB = 60;
+		const innerW = containerW - marginL - marginR;
+		const innerH = containerH - marginT - marginB;
+		return { containerW, containerH, marginL, marginR, marginT, marginB, innerW, innerH };
+	}
+
+	function buildChartPath(lines: any[]) {
+		if (!lines.length) return "";
+		const dates = lines[0].data.map((d: any) => d.date);
+		if (!dates.length) return "";
+
+		const allPositions = lines.flatMap(l => l.data.map(d => d.position));
+		const minP = Math.max(1, Math.min(...allPositions) - 1);
+		const maxP = Math.min(20, Math.max(...allPositions) + 1);
+
+		const { innerW, innerH } = getChartDims();
+		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
+		const yScale = (p: number) => innerH - ((p - minP) / (maxP - minP || 1)) * innerH;
+
+		let pathStr = "";
+		for (const line of lines) {
+			const pts = line.data.filter((d: any) => d.position >= 1);
+			if (pts.length < 2) continue;
+		 const segments = pts.map((d: any, i: number) => {
+				const absI = line.data.indexOf(d);
+				const x = xScale(absI);
+				const y = yScale(d.position);
+				return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+			}).join(' ');
+			pathStr += segments + " ";
+		}
+		return pathStr.trim();
+	}
+
+	function buildChartPoints(lines: any[]) {
+		if (!lines.length) return [];
+		const dates = lines[0].data.map((d: any) => d.date);
+		if (!dates.length) return [];
+
+		const allPositions = lines.flatMap(l => l.data.map(d => d.position));
+		const minP = Math.max(1, Math.min(...allPositions) - 1);
+		const maxP = Math.min(20, Math.max(...allPositions) + 1);
+
+		const { innerW, innerH } = getChartDims();
+		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
+		const yScale = (p: number) => innerH - ((p - minP) / (maxP - minP || 1)) * innerH;
+
+		const points: any[] = [];
+		for (const line of lines) {
+			line.data.forEach((d: any, idx: number) => {
+				if (d.position < 1) return;
+				points.push({ x: xScale(idx), y: yScale(d.position), query: line.text, date: d.date, position: d.position });
+			});
+		}
+		return points;
+	}
+
+	function chartMouseMove(e: MouseEvent) {
+		const svg = e.currentTarget as SVGElement;
+		if (!svg || !chartHoverQuery) return;
+		const rect = svg.getBoundingClientRect();
+		const mouseX = e.clientX - rect.left;
+		const mouseY = e.clientY - rect.top;
+		const { marginL, innerW } = getChartDims();
+
+		// Find nearest date to cursor
+		if (trendLines.length === 0) return;
+		const dates = trendLines[0].data.map((d: any) => d.date);
+		if (!dates.length) return;
+
+		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
+		const totalX = mouseX + marginL;
+		let nearestIdx = Math.round((totalX / innerW) * (dates.length - 1));
+		nearestIdx = Math.max(0, Math.min(dates.length - 1, nearestIdx));
+
+		hoverDate = dates[nearestIdx];
+	}
+
+	let hoverDate = $state<string | null>(null);
+
 	function startAutoRefresh() {
 		stopAutoRefresh();
 		autoRefreshId = window.setInterval(async () => {
@@ -290,6 +424,8 @@
 		if (tab === 'positions') loadPositions();
 		if (tab === 'markers') loadMarkers();
 		if (tab === 'webmaster') loadWebmarkers();
+		if (tab === 'stats') loadRequestTable();
+		if (tab === 'delegates') loadDelegates();
 		startAutoRefresh();
 	}
 
@@ -299,7 +435,9 @@
 		{ key: "queries", label: "Запросы" },
 		{ key: "queue", label: "Очередь" },
 		{ key: "analytics", label: "Аналитика" },
+		{ key: "stats", label: "Статистика" },
 		{ key: "positions", label: "Позиции" },
+		{ key: "delegates", label: "Делегаты" },
 		{ key: "markers", label: "Маркеры" },
 		{ key: "webmaster", label: "ВебМастер" },
 	];
@@ -513,18 +651,145 @@
 
 		{:else if activeTab === 'analytics'}
 			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
-				<a href="/analytics" class="text-blue-600 hover:text-blue-700">Перейти к аналитике →</a>
+				<a href="/analytics" class="text-blue-600 hover:text-blue-700">Перейти к общей аналитике →</a>
 			</div>
+
+		{:else if activeTab === 'stats'}
+			<!-- Stats tab: per-query statistics -->
+			<div class="mb-4">
+				<p class="text-sm text-gray-500">Статистика по каждому запросу: частота, средняя позиция, завершённые задачи.</p>
+			</div>
+
+			{#if requestTableData.length === 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет статистики. Данные появятся после завершения первых задач очереди.</div>
+			{:else}
+				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+					<div class="overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead class="bg-gray-50 border-b border-gray-200">
+								<tr>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Запрос</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Частота</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Кликов/день</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Ср. позиция</th>
+									<th class="px-4 py-3 text-right font-medium text-gray-600">Всего задач</th>
+									<th class="px-4 py-3 text-right font-medium text-gray-600">Завершено</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each requestTableData as row}
+									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+										<td class="px-4 py-3 font-medium text-gray-900 max-w-[300px] truncate" title={row.text}>{row.text}</td>
+										<td class="px-4 py-3 text-gray-700">{row.frequency ?? '—'}</td>
+										<td class="px-4 py-3 text-gray-700">{row.daily_clicks ?? '—'}</td>
+										<td class="px-4 py-3">
+											{#if row.avg_position != null}
+												<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+													row.avg_position <= 3 ? 'bg-green-100 text-green-800' :
+													row.avg_position <= 10 ? 'bg-blue-100 text-blue-800' :
+													'bg-yellow-100 text-yellow-800'
+												}`}>#{row.avg_position}</span>
+											{:else}
+												<span class="text-gray-400">—</span>
+											{/if}
+										</td>
+										<td class="px-4 py-3 text-right text-gray-700">{row.total_tasks.toLocaleString()}</td>
+										<td class="px-4 py-3 text-right">
+											<span class="font-medium {row.completed_count > 0 ? 'text-green-600' : 'text-gray-400'}">
+												{row.completed_count.toLocaleString()}
+											</span>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			{/if}
 
 		{:else if activeTab === 'positions'}
 			<!-- Positions tab -->
-			<div class="mb-4">
-				<p class="text-sm text-gray-500">История позиций по запросам. Данные обновляются каждые 10 секунд.</p>
+			<div class="mb-4 flex items-center justify-between">
+				<div>
+					<p class="text-sm text-gray-500">История позиций по запросам. Обновление каждые 10 секунд.</p>
+				</div>
+				{#if trendLines.length > 0 && positionsData.length > 0}
+					<div class="flex gap-2">
+						<button onclick={() => { showChart = true; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>График</button>
+						<button onclick={() => { showChart = false; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${!showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>Таблица</button>
+					</div>
+				{/if}
 			</div>
 
-			{#if positionsData.length === 0}
+			{#if trendLines.length === 0 && positionsData.length === 0}
 				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет данных о позициях. Позиции появятся после завершения первых задач.</div>
-			{:else}
+			{:else if showChart && trendLines.length > 0}
+				<!-- SVG Position Trend Chart -->
+				<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+					<svg viewBox="0 0 {getChartDims().containerW} {getChartDims().containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
+						{#const dims = getChartDims()}
+						<!-- Grid lines (horizontal) -->
+						{#for (let i = 1; i <= Math.min(10, Math.floor(dims.innerH / 30)); i++)}
+							<line x1={dims.marginL} y1={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} x2={dims.marginL + dims.innerW} y2={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} stroke="#f1f5f9" stroke-width="1" />
+						{/for}
+
+						<!-- Axis labels -->
+						<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...trendLines[0].data.map((d: any) => d.position)) || 1)}</text>
+						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
+
+						<!-- X-axis date labels -->
+						{#if trendLines[0]?.data?.length > 0}
+							{#for (let i = 0; i < trendLines[0].data.length; i += Math.max(1, Math.floor(trendLines[0].data.length / 6)))}
+								<text x={dims.marginL + (i / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(trendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
+							{/for}
+						{/if}
+
+						<!-- Trend lines -->
+						{#each trendLines as line}
+							<text x={dims.marginL - 8} y={dims.marginT + 4 + trendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
+						{/each}
+
+						<!-- Paths -->
+						<path d="{buildChartPath(trendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
+
+						<!-- Hover line and tooltip -->
+						{#if hoverDate && trendLines[0]?.data?.length > 0}
+							{#const hoverIdx = trendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
+							{#if hoverIdx >= 0}
+								<line x1={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
+							{/if}
+						{/if}
+					{/const}
+					</svg>
+
+					<!-- Legend -->
+					<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+						{#each trendLines as line}
+							<button onclick={() => { chartHoverQuery = chartHoverQuery === line.text ? null : line.text; }} class="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity" onmouseleave={() => { chartHoverQuery = null; }}>
+								<span class="w-2 h-2 rounded-full bg-blue-500"></span>
+								<span class="text-gray-600 truncate max-w-[120px]">{line.text}</span>
+							</button>
+						{/each}
+					</div>
+
+					{#if hoverDate && trendLines.length > 0}
+						<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+							<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
+							{#each trendLines as line}
+								{#const d = line.data.find((p: any) => p.date === hoverDate)}
+								{#if d}
+									<div class="flex justify-between gap-4">
+										<span class="text-gray-500 truncate">{line.text}</span>
+										<span class="font-mono font-medium text-blue-600">#{d.position}</span>
+									</div>
+								{/if}
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+			{:else if !showChart && positionsData.length > 0}
+				<!-- Table view -->
 				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
@@ -544,6 +809,63 @@
 												pos.position <= 10 ? 'bg-blue-100 text-blue-800' :
 												'bg-gray-100 text-gray-800'
 											}`}>#{pos.position}</span>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			{/if}
+
+			{:else if activeTab === 'delegates'}
+			<!-- Delegates tab -->
+			<div class="mb-4">
+				<p class="text-sm text-gray-500">Управление доступом к проекту для других пользователей.</p>
+			</div>
+
+			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
+				<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить делегата</h3>
+				<div class="flex flex-wrap gap-2 items-end">
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">ID пользователя</label>
+						<input type="text" bind:value={newDelegateUserId} placeholder="uuid" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none w-72" />
+					</div>
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">Роль</label>
+						<select bind:value={newDelegateRole} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+							<option value="view">Только просмотр</option>
+							<option value="edit">Просмотр и редактирование</option>
+						</select>
+					</div>
+					<button onclick={addDelegate} class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
+				</div>
+			</div>
+
+			{#if delegates.length === 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет делегатов. Добавьте пользователей для совместного доступа к проекту.</div>
+			{:else}
+				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+					<div class="overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead class="bg-gray-50 border-b border-gray-200">
+								<tr>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">UserID</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Роль</th>
+									<th class="px-4 py-3 text-right font-medium text-gray-600">Действия</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each delegates as d}
+									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+										<td class="px-4 py-3 font-mono text-xs text-gray-700">{d.delegate_user_id}</td>
+										<td class="px-4 py-3">
+											<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+												d.role === 'edit' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+											}`}>{d.role === 'edit' ? 'Редактирование' : 'Только просмотр'}</span>
+										</td>
+										<td class="px-4 py-3 text-right">
+											<button onclick={() => removeDelegate(d.delegate_user_id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
 										</td>
 									</tr>
 								{/each}
