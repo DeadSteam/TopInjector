@@ -48,6 +48,16 @@
 	let newMarkerUrl = $state("");
 	let newMarkerSelector = $state("");
 
+	// Per-project analytics
+	interface TimelinePoint { date: string; count: number }
+	interface TrackingPoint { position: number; date: string | null }
+	interface PositionSummary { best_position: number | null; avg_position: number | null; total_records: number }
+
+	let analyticsSummary = $state<any>(null);
+	let timelineData = $state<TimelinePoint[]>([]);
+	let trackingData = $state<TrackingPoint[]>([]);
+	let positionSummary = $state<PositionSummary | null>(null);
+
 	// Webmarkers
 	let webmarkersData = $state<any[]>([]);
 
@@ -164,6 +174,19 @@
 		if (!confirm("Убрать доступ?")) return;
 		try { await api.projects.removeDelegate(projectId, userId); await loadDelegates(); }
 		catch (err) { error = err instanceof Error ? err.message : "Ошибка удаления"; }
+	}
+
+	async function loadProjectAnalytics() {
+		try { analyticsSummary = await api.analytics.summary(projectId); } catch { analyticsSummary = null; }
+		try {
+			const tl = await api.analytics.clicks(projectId);
+			timelineData = tl.timeline || [];
+		} catch { timelineData = []; }
+		try {
+			const tr = await api.analytics.trackingPositions(projectId);
+			trackingData = tr.tracking || [];
+			positionSummary = tr.summary || null;
+		} catch { trackingData = []; positionSummary = null; }
 	}
 
 	async function loadMarkers() {
@@ -426,6 +449,7 @@
 		if (tab === 'webmaster') loadWebmarkers();
 		if (tab === 'stats') loadRequestTable();
 		if (tab === 'delegates') loadDelegates();
+		if (tab === 'analytics') loadProjectAnalytics();
 		startAutoRefresh();
 	}
 
@@ -655,9 +679,90 @@
 			</div>
 
 		{:else if activeTab === 'analytics'}
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
-				<a href="/analytics" class="text-blue-600 hover:text-blue-700">Перейти к общей аналитике →</a>
+			<!-- Per-project analytics -->
+			{#if analyticsSummary}
+				<div class="grid grid-cols-2 gap-4 mb-6">
+					<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+						<p class="text-sm text-gray-500">Всего кликов</p>
+						<p class="text-3xl font-bold text-gray-900 mt-1">{analyticsSummary.total_clicks?.toLocaleString() ?? '—'}</p>
+					</div>
+					<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+						<p class="text-sm text-gray-500">Успешность</p>
+						<p class="text-3xl font-bold text-green-600 mt-1">
+							{analyticsSummary.completed_rate ? (analyticsSummary.completed_rate * 100).toFixed(1) + '%' : '—'}
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			<!-- Timeline bar chart -->
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+				<h3 class="font-medium text-gray-900 mb-4">Клики по дням</h3>
+
+				{#if timelineData.length === 0}
+					<div class="h-48 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+						Нет данных о кликах. Клики начнут отображаться после выполнения первых задач.
+					</div>
+				{:else}
+					{#let maxCount = Math.max(...timelineData.map((d: any) => d.count), 1)}
+						<div class="flex items-end gap-0.5 h-48 px-1">
+							{#each timelineData as point, i}
+								<div class="flex-1 flex flex-col items-center group relative">
+									<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
+										{new Date(point.date).toLocaleDateString('ru-RU')}: {point.count} кликов
+									</div>
+									<div class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors" style="height: calc({point.count} / {maxCount} * 100%)"></div>
+								</div>
+							{/each}
+						</div>
+					{/let}
+				{/if}
 			</div>
+
+			<!-- Position tracking -->
+			{#if positionSummary && positionSummary.total_records > 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+					<h3 class="font-medium text-gray-900 mb-4">Позиции</h3>
+					<div class="flex gap-4 mb-4">
+						<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+							<span class="text-xs text-green-700">Лучшая:</span>
+							<span class="text-sm font-bold text-green-900 ml-1">#{positionSummary.best_position}</span>
+						</div>
+						<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+							<span class="text-xs text-blue-700">Средняя:</span>
+							<span class="text-sm font-bold text-blue-900 ml-1">{positionSummary.avg_position}</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+					<div class="overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead class="bg-gray-50 border-b border-gray-200">
+								<tr>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Дата</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each trackingData.slice(-50).reverse() as point}
+									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+										<td class="px-4 py-3 font-mono font-bold {point.position <= 3 ? 'text-green-600' : point.position <= 10 ? 'text-blue-600' : 'text-gray-500'}">
+											#{point.position}
+										</td>
+										<td class="px-4 py-3 text-gray-500">{point.date ? new Date(point.date).toLocaleDateString('ru-RU') : '—'}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			{/if}
+
+			{:else if analyticsSummary === null && timelineData.length === 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
+					Нет данных аналитики. Данные появятся после выполнения первых задач очереди.
+				</div>
 
 		{:else if activeTab === 'stats'}
 			<!-- Stats tab: per-query statistics -->
