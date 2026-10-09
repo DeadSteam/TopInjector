@@ -1,16 +1,20 @@
 """Project service routes — CRUD for projects, queries, groups and more."""
 
 from uuid import UUID, uuid4
+import csv as _csv
+import io as _io
+import json as _json
 
-from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast
+from sqlalchemy.types import Date as sa_Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.session import get_session
 from services.project_service.domain.models import (
     Project,
     ProjectToken,
-    Query,
+    Query as _QueryModel,
     Marker,
     Webmarker,
     ProjectGroup,
@@ -168,17 +172,15 @@ async def create_project(
 
 @router.get("/")
 async def list_projects(
-    search: str | None = Query(None),
-    group_id: str | None = Query(None),
-    region: str | None = Query(None),
-    strategy_type: str | None = Query(None),
-    is_active: bool | None = Query(None),
+    search: str | None = Query(default=None),
+    group_id: str | None = Query(default=None),
+    region: str | None = Query(default=None),
+    strategy_type: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
     project_repo: ProjectRepository = Depends(_project_repo),
+    session: AsyncSession = Depends(get_session),
 ):
     """List projects with optional filters and search."""
-    from shared.database.session import get_session as _gs  # avoid circular
-
-    session = await anext(_gs())  # type: ignore[arg-type]
 
     stmt = select(Project)
 
@@ -198,24 +200,22 @@ async def list_projects(
     projects = result.scalars().all()
 
     # Also fetch query counts and queue stats per project
-    proj_ids = [str(p.id) for p in projects]
+    proj_uuids = [p.id for p in projects]
     counts_map: dict[str, int] = {}
-    if proj_ids:
+    if proj_uuids:
         q_result = await session.execute(
-            select(Query.project_id, func.count())
-            .where(Query.project_id.in_(proj_ids))  # type: ignore[arg-type]
-            .group_by(Query.project_id)
+            select(_QueryModel.project_id, func.count())
+            .where(_QueryModel.project_id.in_(proj_uuids))  # type: ignore[arg-type]
+            .group_by(_QueryModel.project_id)
         )
         counts_map = {str(r[0]): r[1] for r in q_result.all()}
 
     # Check delegation: build set of project IDs the current user is a delegate for
     delegated_ids: set[str] = set()
-    from shared.database.session import get_session as _gs  # avoid circular
-    delegate_session = await anext(_gs())
-    if proj_ids:
-        del_result = await delegate_session.execute(
+    if proj_uuids:
+        del_result = await session.execute(
             select(ProjectDelegate.project_id)
-            .where(ProjectDelegate.project_id.in_(proj_ids))  # type: ignore[arg-type]
+            .where(ProjectDelegate.project_id.in_(proj_uuids))  # type: ignore[arg-type]
         )
         delegated_ids = {str(r[0]) for r in del_result.all()}
 
@@ -317,7 +317,7 @@ async def add_query(
     else:
         click_url = body["click_url"]
 
-    query = Query(
+    query = _QueryModel(
         project_id=UUID(project_id),
         text=text,
         url=body.get("url"),
@@ -378,7 +378,7 @@ async def update_query(
     session: AsyncSession = Depends(get_session),
 ):
     """Update a single query (inline editing: geo, daily_clicks, click_url, url)."""
-    result = await session.execute(select(Query).where(Query.id == UUID(query_id)))
+    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id)))
     query = result.scalar_one_or_none()
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -407,7 +407,7 @@ async def delete_query(
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a query from a project."""
-    result = await session.execute(select(Query).where(Query.id == UUID(query_id)))
+    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id)))
     query = result.scalar_one_or_none()
     if not query or query.project_id != UUID(project_id):
         raise HTTPException(status_code=404, detail="Query not found")
@@ -437,7 +437,7 @@ async def boost_queries(
 
     for qid in query_ids:
         # Update query fields
-        result = await session.execute(select(Query).where(Query.id == UUID(qid)))
+        result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(qid)))
         query = result.scalar_one_or_none()
         if not query or query.project_id != UUID(project_id):
             continue
@@ -481,11 +481,11 @@ async def get_request_table(
 
     result = await session.execute(
         select(
-            Query.id,
-            Query.text,
-            Query.frequency,
-            Query.daily_clicks,
-            Query.click_url,
+            _QueryModel.id,
+            _QueryModel.text,
+            _QueryModel.frequency,
+            _QueryModel.daily_clicks,
+            _QueryModel.click_url,
             func.avg(QueueTask.position).label("avg_position"),
             func.count(
                 QueueTask.id
@@ -494,9 +494,9 @@ async def get_request_table(
                 sa_case((QueueTask.status == "completed", 1), else_=0)
             ).label("completed_count"),
         )
-        .join(QueueTask, Query.id == QueueTask.query_id, isouter=True)
-        .where(Query.project_id == UUID(project_id))
-        .group_by(Query.id, Query.text, Query.frequency, Query.daily_clicks, Query.click_url)
+        .join(QueueTask, _QueryModel.id == QueueTask.query_id, isouter=True)
+        .where(_QueryModel.project_id == UUID(project_id))
+        .group_by(_QueryModel.id, _QueryModel.text, _QueryModel.frequency, _QueryModel.daily_clicks, _QueryModel.click_url)
     )
 
     rows = []
@@ -545,10 +545,10 @@ async def get_positions(
 ):
     """Return position history for queries in a project."""
     result = await session.execute(
-        select(Query.text, QueueTask.position)
-        .join(QueueTask, Query.id == QueueTask.query_id)
+        select(_QueryModel.text, QueueTask.position)
+        .join(QueueTask, _QueryModel.id == QueueTask.query_id)
         .where(
-            Query.project_id == UUID(project_id),
+            _QueryModel.project_id == UUID(project_id),
             QueueTask.status == "completed",
             QueueTask.position.isnot(None),
         )
@@ -570,13 +570,13 @@ async def get_position_trend(
 
     result = await session.execute(
         select(
-            Query.text,
+            _QueryModel.text,
             QueueTask.position,
-            func.cast(QueueTask.created_at.func.date(), sa_text("DATE")).label("day"),
+            func.date(QueueTask.created_at).label("day"),
         )
-        .join(QueueTask, Query.id == QueueTask.query_id)
+        .join(QueueTask, _QueryModel.id == QueueTask.query_id)
         .where(
-            Query.project_id == UUID(project_id),
+            _QueryModel.project_id == UUID(project_id),
             QueueTask.status == "completed",
             QueueTask.position.isnot(None),
         )
@@ -844,7 +844,6 @@ async def list_delegates(
     session: AsyncSession = Depends(get_session),
 ):
     """List delegates for a project."""
-    from services.project_service.domain.models import User  # avoid circular if needed
 
     result = await session.execute(
         select(ProjectDelegate)
@@ -882,11 +881,14 @@ async def add_delegate(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="User already a delegate")
 
+    inviter_raw = body.get("inviter_user_id")
+    inviter_uuid = UUID(inviter_raw) if isinstance(inviter_raw, str) else (inviter_raw or uuid4())
+
     invite = ProjectDelegate(
         id=uuid4(),
         project_id=UUID(project_id),
         delegate_user_id=delegate_uid,
-        inviter_user_id=body.get("inviter_user_id"),
+        inviter_user_id=inviter_uuid,
         role=role,
     )
     session.add(invite)
@@ -927,12 +929,12 @@ async def remove_delegate(
 @router.post("/{project_id}/queries/import")
 async def import_queries(
     project_id: str,
-    body: dict,
+    request: Request,
     query_repo: QueryRepository = Depends(_query_repo),
     session: AsyncSession = Depends(get_session),
 ):
-    """Bulk import queries from CSV text column. Body must contain 'csv_text' (string)."""
-    csv_raw = body.get("csv_text", "")
+    """Bulk import queries from raw CSV body."""
+    csv_raw = (await request.body()).decode("utf-8")
     if not csv_raw.strip():
         raise HTTPException(status_code=400, detail="CSV content is empty")
 
@@ -962,7 +964,7 @@ async def import_queries(
             params = _urllib.urlencode({"q": text})
             click_url = f"https://yandex.ru/search/?text={_urllib.quote(text)}"
 
-        query = Query(
+        query = _QueryModel(
             project_id=project_uuid,
             text=text,
             url=url if url else None,
@@ -972,6 +974,7 @@ async def import_queries(
             position=None,
             frequency=1,
         )
+        session.add(query)
         created += 1
 
     try:
@@ -990,7 +993,7 @@ async def export_queries(
     session: AsyncSession = Depends(get_session),
 ):
     """Export all queries for a project as CSV."""
-    queries_result = await session.execute(select(Query).where(Query.project_id == UUID(project_id)))
+    queries_result = await session.execute(select(_QueryModel).where(_QueryModel.project_id == UUID(project_id)))
     queries = queries_result.scalars().all()
 
     if not queries:
