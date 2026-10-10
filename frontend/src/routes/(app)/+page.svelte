@@ -101,6 +101,12 @@
 		}
 	}
 
+	// Pagination
+	let currentPage = $state(1);
+	let pageSize = $state(20);
+	let totalProjects = $state(0);
+	let totalFiltered = $state<number | null>(null);
+
 	async function loadProjects() {
 		const params: any = {};
 		if (searchQuery) params.search = searchQuery;
@@ -108,13 +114,18 @@
 		if (filterRegion !== "all") params.region = filterRegion;
 		if (filterStrategy !== "all") params.strategy_type = filterStrategy;
 		if (filterActive !== "all") params.is_active = filterActive === "true";
+		params.page = currentPage;
+		params.page_size = pageSize;
 
 		try {
-			const list = await api.projects.list(params);
-			projects = list || [];
+			const resp: any = await api.projects.list(params);
+			projects = resp?.items ?? resp ?? [];
+			totalProjects = resp?.total ?? projects.length;
+			totalFiltered = resp?.total ?? null;
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки проектов";
 			projects = [];
+			totalProjects = 0;
 		}
 	}
 
@@ -164,8 +175,29 @@
 
 	function handleSearch() {
 		if (searchDebounce) clearTimeout(searchDebounce);
-		searchDebounce = window.setTimeout(() => loadProjects(), 300);
+		searchDebounce = window.setTimeout(() => { currentPage = 1; loadProjects(); }, 300);
 	}
+
+	function handleFilterResetPage() {
+		currentPage = 1;
+		loadProjects();
+	}
+
+	// Pagination helpers
+	function goToPage(page: number) {
+		currentPage = page;
+		loadProjects();
+	}
+
+	const totalPages = $derived(Math.max(1, Math.ceil((totalFiltered ?? totalProjects) / pageSize)));
+	const showPages = $derived(() => {
+		// Show at most 7 page numbers
+		const pages: number[] = [];
+		const start = Math.max(1, currentPage - 3);
+		const end = Math.min(totalPages, currentPage + 3);
+		for (let i = start; i <= end; i++) pages.push(i);
+		return pages;
+	});
 
 	async function createProject() {
 		if (!createFormName || !createFormDomain) return;
@@ -433,27 +465,27 @@
 			class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
 		/>
 
-		<select bind:value={filterGroup} onchange={loadProjects} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+		<select bind:value={filterGroup} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			<option value="all">Все группы</option>
 			{#each groups as group}
 				<option value={group.id}>{group.name}</option>
 			{/each}
 		</select>
 
-		<select bind:value={filterRegion} onchange={loadProjects} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+		<select bind:value={filterRegion} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			<option value="all">Все регионы</option>
 			{#each allRegions as region}
 				<option value={region}>{region}</option>
 			{/each}
 		</select>
 
-		<select bind:value={filterStrategy} onchange={loadProjects} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+		<select bind:value={filterStrategy} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			{#each strategies as s}
 				<option value={s}>{s === "all" ? "Все стратегии" : s}</option>
 			{/each}
 		</select>
 
-		<select bind:value={filterActive} onchange={loadProjects} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+		<select bind:value={filterActive} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			<option value="all">Все</option>
 			<option value="true">Активные</option>
 			<option value="false">Неактивные</option>
@@ -590,6 +622,39 @@
 					</tbody>
 				</table>
 			</div>
+
+			<!-- Pagination -->
+			{#if totalPages > 1}
+				<div class="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+					<p class="text-sm text-gray-500">
+						Страница {currentPage} из {totalPages} · Всего {totalFiltered ?? totalProjects} проектов
+					</p>
+					<div class="flex items-center gap-1">
+						<button
+							onclick={() => goToPage(currentPage - 1)}
+							disabled={currentPage <= 1}
+							class="px-2 py-1 text-sm border rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+						← Назад
+						</button>
+						{#each showPages() as page}
+							<button
+								onclick={() => goToPage(page)}
+								class={`${page === currentPage ? 'bg-blue-600 text-white' : 'border hover:bg-gray-50'}`}
+							>
+								{page}
+							</button>
+						{/each}
+						<button
+							onclick={() => goToPage(currentPage + 1)}
+							disabled={currentPage >= totalPages}
+							class="px-2 py-1 text-sm border rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+							Вперёд →
+						</button>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 

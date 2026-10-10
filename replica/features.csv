@@ -1,5 +1,5 @@
 screen_id,feature,ghostlab,backend-topinjector,frontend-topinjector,notes
-S02,project-listing-table,yes,yes,skeleton-only,Missing: filters (group/region/activity/strategy/integration/access), search (auto+Ctrl+E), column config, pagination
+S02,project-listing-table,yes,yes,pagination,built pagination; missing: filters (group/region/activity/strategy/integration/access), search (auto+Ctrl+E), column config improvements
 S02,project-groups-create,yes,yes,skeleton-only,Missing: group UI with icons
 S02,delegation-with-badges,yes,yes,partial-badge,"Model exists (ProjectDelegate) but frontend is skeleton"
 S02,import-export-projects,yes,yes,skeleton-only,CSV endpoints exist per git log 7691c43

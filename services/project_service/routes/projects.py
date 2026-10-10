@@ -182,26 +182,47 @@ async def list_projects(
     region: str | None = Query(default=None),
     strategy_type: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     project_repo: ProjectRepository = Depends(_project_repo),
     session: AsyncSession = Depends(get_session),
 ):
-    """List projects with optional filters and search."""
+    """List projects with optional filters and pagination."""
 
-    stmt = select(Project)
+    base_stmt = select(Project)
+
+    # Build filter conditions for counting (same as main query)
+    count_conditions = []
+    filter_conditions = []
 
     if search:
         pattern = f"%{search}%"
-        stmt = stmt.where(Project.name.ilike(pattern))
+        count_conditions.append(Project.name.ilike(pattern))
+        filter_conditions.append(Project.name.ilike(pattern))
     if group_id:
-        stmt = stmt.where(Project.group_id == UUID(group_id))
+        gid = UUID(group_id)
+        count_conditions.append(Project.group_id == gid)
+        filter_conditions.append(Project.group_id == gid)
     if region:
-        stmt = stmt.where(Project.region == region)
+        count_conditions.append(Project.region == region)
+        filter_conditions.append(Project.region == region)
     if strategy_type:
-        stmt = stmt.where(Project.strategy_type == strategy_type)
+        count_conditions.append(Project.strategy_type == strategy_type)
+        filter_conditions.append(Project.strategy_type == strategy_type)
     if is_active is not None:
-        stmt = stmt.where(Project.is_active == is_active)
+        count_conditions.append(Project.is_active == is_active)
+        filter_conditions.append(Project.is_active == is_active)
 
-    result = await session.execute(stmt.order_by(Project.name))
+    # Count total matching projects
+    count_stmt = select(func.count()).select_from(Project).where(*filter_conditions)
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    # Main query with pagination
+    stmt = select(Project).where(*filter_conditions)
+    stmt = stmt.order_by(Project.name)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    result = await session.execute(stmt)
     projects = result.scalars().all()
 
     # Also fetch query counts and queue stats per project
@@ -224,22 +245,27 @@ async def list_projects(
         )
         delegated_ids = {str(r[0]) for r in del_result.all()}
 
-    return [
-        {
-            "id": str(p.id),
-            "name": p.name,
-            "domain": p.domain,
-            "region": p.region or "",
-            "strategy_type": p.strategy_type,
-            "daily_limit": p.daily_limit,
-            "is_active": p.is_active,
-            "group_id": str(p.group_id) if p.group_id else None,  # type: ignore[attr-defined]
+    return {
+        "items": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "domain": p.domain,
+                "region": p.region or "",
+                "strategy_type": p.strategy_type,
+                "daily_limit": p.daily_limit,
+                "is_active": p.is_active,
+                "group_id": str(p.group_id) if p.group_id else None,  # type: ignore[attr-defined]
             "group_name": p.group.name if p.group else None,  # type: ignore[attr-defined]
             "query_count": counts_map.get(str(p.id), 0),
             "is_delegate": str(p.id) in delegated_ids,
         }
         for p in projects
-    ]
+    ],
+    "total": total,
+    "page": page,
+    "page_size": page_size,
+}
 
 
 @router.get("/{project_id}")
