@@ -21,7 +21,7 @@ S04,bulk-query-edit-modal,yes,,built,"Modal with daily_clicks, geo JSON editor, 
 S04,boost-from-project-detail,yes,,built,"Select queries→Boost→count+interval→redistribute now/tomorrow (existing boost modal)"
 S04,info-panel-dashboard,yes,yes,built,"Strategy stats/source breakdown/queue statuses/quick links + Settings tab (integrations/schedule/window/query-mods)"
 S04,query-table-columns,yes,yes,partial,Missing: inline-edit clicks/day, avg position, frequency
-S04,query-filters,yes,,not-built,"Position range/frequency range/text search — model has columns"
+S04,query-filters,yes,,built,"Position range (from/to), frequency range (min), text search — expandable panel with toggle button, counter showing filtered/total"
 S05,analytics-page,yes,yes,built,Missing: report export/summary filter/chart/editable-table/daily drill-down modal
 S05,analytics-charts,yes,yes,stub-chart,"Clicks in TOP ranges + avg position by range; chart stub exists"
 S05,daily-drill-down-modal,yes,yes,built,"Click bars in analytics timeline open drill-down modal with geo/source/position/time breakdown"
