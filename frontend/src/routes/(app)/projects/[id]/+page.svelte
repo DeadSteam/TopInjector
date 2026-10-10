@@ -67,6 +67,32 @@
 	let editingGeo = $state("");
 	let editingClickUrl = $state("");
 
+	// Query filters
+	let showFilters = $state(false);
+	let filterText = $state("");
+	let filterPositionMin = $state<number | undefined>(undefined);
+	let filterPositionMax = $state<number | undefined>(undefined);
+	let filterFrequencyMin = $state<number | undefined>(undefined);
+
+	function clearQueryFilters() {
+		filterText = "";
+		filterPositionMin = undefined;
+		filterPositionMax = undefined;
+		filterFrequencyMin = undefined;
+	}
+
+	function matchesFilters(query: QueryRow): boolean {
+		if (filterText && !query.text.toLowerCase().includes(filterText.toLowerCase())) return false;
+		if (filterPositionMin !== undefined && (query.position === null || query.position < filterPositionMin)) return false;
+		if (filterPositionMax !== undefined && (query.position === null || query.position > filterPositionMax)) return false;
+		if (filterFrequencyMin !== undefined && (query.frequency === undefined || query.frequency === null || query.frequency < filterFrequencyMin)) return false;
+		return true;
+	}
+
+	function filteredQueries(): QueryRow[] {
+		return queries.filter(matchesFilters);
+	}
+
 	// Project settings state
 	let settingIntegration = $state("default");
 	let settingScheduleStart = $state("");
@@ -380,10 +406,11 @@
 	}
 
 	function selectAll() {
-		if (queries.every(q => selectedQueryIds.has(q.id))) {
+		const targets = showFilters ? filteredQueries() : queries;
+		if (targets.every(q => selectedQueryIds.has(q.id))) {
 			selectedQueryIds.clear();
 		} else {
-			queries.forEach(q => selectedQueryIds.add(q.id));
+			targets.forEach(q => selectedQueryIds.add(q.id));
 		}
 	}
 
@@ -765,8 +792,39 @@
 							<button onclick={selectAll} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Выбрать все</button>
 						{/if}
 						<button onclick={() => { proklikMode = "all"; showProklik = true; }} class="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium">Проклик</button>
+							<button onclick={() => showFilters = !showFilters} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">&#9889; Фильтры</button>
 					</div>
 				</div>
+
+					{#if showFilters}
+						<div class="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-wrap items-end gap-3">
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Текст запроса</label>
+								<input type="text" bind:value={filterText} placeholder="Поиск по тексту..." class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-48" />
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Позиция от</label>
+								<input type="number" bind:value={filterPositionMin} placeholder="1" min="1" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-24" />
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Позиция до</label>
+								<input type="number" bind:value={filterPositionMax} placeholder="беск." min="1" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-24" />
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Частота от</label>
+								<input type="number" bind:value={filterFrequencyMin} placeholder="0" min="0" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-24" />
+							</div>
+							<button onclick={clearQueryFilters} class="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">&#8634; Сбросить</button>
+							</div>
+						{#if queries.length}
+							<div class="px-4 py-2 text-xs text-gray-500 bg-white border-b border-gray-200">
+								Показано {filteredQueries().length} из {queries.length} запросов
+								{#if filterText || filterPositionMin !== undefined || filterPositionMax !== undefined || filterFrequencyMin !== undefined}
+									<span class="ml-1 text-blue-600">(применены фильтры)</span>
+								{/if}
+							</div>
+						{/if}
+					{/if}
 
 				<!-- Queries table -->
 				<div class="overflow-x-auto">
@@ -784,7 +842,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each queries as query}
+							{#each filteredQueries() as query}
 								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors {selectedQueryIds.has(query.id) ? 'bg-purple-50' : ''}">
 									<td class="px-3 py-3">
 										<input type="checkbox" bind:group={proklikQueries} value={query.id} checked={selectedQueryIds.has(query.id)} onchange={() => toggleSelect(query.id)} class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
