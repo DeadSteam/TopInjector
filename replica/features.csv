@@ -1,0 +1,34 @@
+screen_id,feature,ghostlab,backend-topinjector,frontend-topinjector,notes
+S02,project-listing-table,yes,yes,skeleton-only,Missing: filters (group/region/activity/strategy/integration/access), search (auto+Ctrl+E), column config, pagination
+S02,project-groups-create,yes,yes,skeleton-only,Missing: group UI with icons
+S02,delegation-with-badges,yes,yes,partial-badge,"Model exists (ProjectDelegate) but frontend is skeleton"
+S02,import-export-projects,yes,yes,skeleton-only,CSV endpoints exist per git log 7691c43
+S02,mass-edit-toolbar,yes,yes,not-built,Missing: start/stop/delegate/bulk-edit/auto-stop/delete for multiple
+S02,context-menu-3-dots,yes,,not-built,Missing: edit/copy(auto-stop/delete)
+S02,overdue-toggle,yes,yes,built,Overdue filter endpoint + toggle in listing filters
+S02,source-breakdown-checkbox,yes,yes,built,Three sources: strategy/autoburst/proklik — UI toggle + columns added in listing
+S03,project-create-form,yes,yes,skeleton-only,Missing: integration selector/schedule window/query-modifications
+S03,multigeo-with-percentage,yes,yes,not-built,"geo_settings JSON column exists; multigeo UI not built"
+S03,preset-city-packs,yes,,not-built,Need city code DB (Yandex geo codes)
+S03,query-modifications,yes,yes,not-built,JSON flags: capital-first/random-caps/typos/trailing-space — model + UI missing
+S03,schedule-window,yes,yes,not-built,"Time window (e.g. 7-22); model needs scheduling_window field"
+S03,boost-tab-from-project-settings,yes,yes,not-built,Time window + day distribution for autoburst
+S04,project-header-section,yes,,skeleton-only,Missing: group link/activity toggle/edit button/view settings
+S04,actions-menu,yes,yes,not-built,"Missing: copy/delegate/auto-stop/clear-queue/collect-frequency/delete"
+S04,instant-click-proklik,yes,yes,not-built,Options: random count/per-query variants — model + UI needed
+S04,per-query-geo-override,yes,yes,not-built,"Query.geo JSON column exists; per-query edit UI missing"
+S04,bulk-query-edit-modal,yes,,not-built,"Geo override/clicks-change/apply-click-url/delete for selected queries"
+S04,boost-from-project-detail,yes,,not-built,"Select queries→Boost→count+interval→redistribute now/tomorrow"
+S04,info-panel-dashboard,yes,yes,not-built,Strategy stats/source breakdown/queue statuses/quick links
+S04,query-table-columns,yes,yes,partial,Missing: inline-edit clicks/day, avg position, frequency
+S04,query-filters,yes,,not-built,"Position range/frequency range/text search — model has columns"
+S05,analytics-page,yes,yes,built,Missing: report export/summary filter/chart/editable-table/daily drill-down modal
+S05,analytics-charts,yes,yes,stub-chart,"Clicks in TOP ranges + avg position by range; chart stub exists"
+S05,daily-drill-down-modal,yes,yes,not-built,"Per-click detail: geo/source/position/time/URL/not-found count"
+S05,inline-edit-clicks-from-analytics,yes,yes,not-built,Clicks/day edit per project with confirmation
+S06,queue-page,yes,yes,built,Missing: status filters/source filters/task detail view/clear-queue-with-filters
+S07,status-bar,yes,,not-built,"Overdue counter/clicks planned-vs-completed/balance/notification-bell"
+S08,profile-settings,yes,,skeleton-only,"Missing: avatar/messengers(API key/password change/external-services"
+S08,messenger-integration,yes,,not-built,Telegram + Max connection for notifications
+S08,external-services-config,yes,,not-built,XML River (UserID+APK) + XMLStock (multiple keys)
+S09,api-docs,yes,,not-built,Stoplight OpenAPI docs page

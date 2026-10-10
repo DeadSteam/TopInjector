@@ -49,6 +49,14 @@
 	let showActionsCol = $state(true);
 	let showActiveToggle = $state(true);
 
+	// Source breakdown columns
+	let showSourceBreakdown = $state(false);
+	let sourceData: Record<string, { completed_by_source: Record<string, number>; pending_by_source: Record<string, number> }> = {};
+	let sourceLoading = $state(false);
+
+	// Overdue filter
+	let showOverdueOnly = $state(false);
+
 	let searchDebounce: number | null = null;
 	let autoRefreshId: number | null = null;
 
@@ -100,6 +108,50 @@
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки проектов";
 			projects = [];
+		}
+	}
+
+	async function loadSourceBreakdowns() {
+		if (!showSourceBreakdown || projects.length === 0) return;
+		sourceLoading = true;
+		try {
+			const results = await Promise.allSettled(
+				projects.map(p => api.projects.sourceBreakdown(p.id).catch(() => null))
+			);
+			sourceData = {};
+			projects.forEach((p, i) => {
+				if (results[i]?.status === 'fulfilled' && results[i].value) {
+					sourceData[p.id] = results[i].value;
+				}
+			});
+		} finally {
+			sourceLoading = false;
+		}
+	}
+
+	async function loadAllStats() {
+		await loadProjects();
+		if (showSourceBreakdown) await loadSourceBreakdowns();
+	}
+
+	async function loadOverdueCounts() {
+		if (projects.length === 0 || !showOverdueOnly) return;
+		const results = await Promise.allSettled(
+			projects.map(p => api.projects.overdueCount(p.id).catch(() => ({ overdue: 0 })))
+		);
+		return Object.fromEntries(
+			projects.map((p, i) => [p.id, results[i]?.status === 'fulfilled' ? (results[i].value as any).overdue : 0])
+		);
+	}
+
+	async function toggleOverdue() {
+		if (showOverdueOnly) {
+			showOverdueOnly = false;
+			await loadProjects();
+		} else {
+			showOverdueOnly = true;
+			const counts = await loadOverdueCounts();
+			projects = projects.filter(p => (counts as any)[p.id] > 0);
 		}
 	}
 
@@ -257,6 +309,19 @@
 		}
 	}
 
+	function toggleSourceBreakdown() {
+		showSourceBreakdown = !showSourceBreakdown;
+		if (showSourceBreakdown) loadSourceBreakdowns();
+		else sourceData = {};
+	}
+
+	let hasOverdueProjects = $derived(
+		projects.some(p => {
+			const sb = sourceData[p.id];
+			return sb && (sb.pending_by_source.strategy > 0 || sb.pending_by_source.autoburst > 0);
+		})
+	);
+
 	onMount(() => {
 		loadData();
 		autoRefreshId = window.setInterval(loadProjects, 30000); // poll every 30s
@@ -366,6 +431,11 @@
 							{#if showQueriesCol}
 								<th class="px-4 py-3 text-left font-medium text-gray-600">Запросов</th>
 							{/if}
+							{#if showSourceBreakdown}
+								<th class="px-4 py-3 text-left font-medium text-purple-600">Клики (стратегия)</th>
+								<th class="px-4 py-3 text-left font-medium text-purple-600">Клики (автобёрст)</th>
+								<th class="px-4 py-3 text-left font-medium text-purple-600">Клики (проклик)</th>
+							{/if}
 							{#if showActionsCol}
 								<th class="px-4 py-3 text-right font-medium text-gray-600">Действия</th>
 							{/if}
@@ -415,6 +485,20 @@
 								<!-- Query count -->
 								{#if showQueriesCol}
 									<td class="px-4 py-3 text-gray-600">{project.query_count || 0}</td>
+								{/if}
+								<!-- Source breakdown -->
+								{#if showSourceBreakdown}
+									{#let sb = sourceData[project.id]}
+										<td class="px-4 py-3 text-green-600 font-medium">
+											{sb?.completed_by_source.strategy ?? '—'}
+										</td>
+										<td class="px-4 py-3 text-blue-600 font-medium">
+											{sb?.completed_by_source.autoburst ?? '—'}
+										</td>
+										<td class="px-4 py-3 text-purple-600 font-medium">
+											{sb?.completed_by_source.proklik ?? '—'}
+										</td>
+									{/let}
 								{/if}
 								<!-- Actions -->
 								{#if showActionsCol}

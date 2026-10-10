@@ -4,9 +4,10 @@ from uuid import UUID, uuid4
 import csv as _csv
 import io as _io
 import json as _json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
-from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast
+from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast, and_
 from sqlalchemy.types import Date as sa_Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1013,3 +1014,51 @@ async def export_queries(
         headers={"Content-Disposition": f"attachment; filename={project_id}_queries.csv"},
         media_type="text/csv",
     )
+
+
+# --- Dashboard / listing enhancements -------------------------------------- #
+
+@router.get("/{project_id}/overdue-count")
+async def get_overdue_count(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return count of overdue tasks (pending with pending_check_at < now)."""
+    now = datetime.now(timezone.utc)
+    result = await session.execute(
+        select(func.count(QueueTask.id))
+        .where(
+            and_(
+                QueueTask.project_id == UUID(project_id),
+                QueueTask.status == "pending",
+                QueueTask.pending_check_at < now,
+            )
+        )
+    )
+    overdue = result.scalar() or 0
+    return {"overdue": overdue}
+
+
+@router.get("/{project_id}/source-breakdown")
+async def get_source_breakdown(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return completed task counts by source (strategy/autoburst/proklik) plus pending breakdown."""
+    result = await session.execute(
+        select(QueueTask.source, QueueTask.status, func.count())
+        .where(QueueTask.project_id == UUID(project_id))
+        .group_by(QueueTask.source, QueueTask.status)
+    )
+    breakdown: dict[str, dict[str, int]] = {}
+    for source, status, count in result.all():
+        breakdown.setdefault(str(source), {})[str(status)] = count  # type: ignore[call-overload]
+
+    return {
+        "completed_by_source": {
+            src: bd.get("completed", 0) for src, bd in breakdown.items()
+        },
+        "pending_by_source": {
+            src: bd.get("pending", 0) for src, bd in breakdown.items()
+        },
+    }

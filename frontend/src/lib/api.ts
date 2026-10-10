@@ -172,6 +172,10 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/delegates`, { method: "POST", body: JSON.stringify(data) }),
 		removeDelegate: (projectId: string, delegateUserId: string) =>
 			fetcher(`/api/projects/${projectId}/delegates/${delegateUserId}`, { method: "DELETE" }),
+		overdueCount: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/overdue-count`),
+		sourceBreakdown: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/source-breakdown`),
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),
