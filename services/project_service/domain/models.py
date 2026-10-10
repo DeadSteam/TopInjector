@@ -45,6 +45,8 @@ class Project(UUIDModel):
     daily_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     geo_settings: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
     integrations: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    scheduling_window: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)  # {start: "07:00", end: "22:00"}
+    query_modifications: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)  # flags: capital_first, random_caps, typos, trailing_space
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "domain", name="uq_projects_user_domain"),)
@@ -73,6 +75,7 @@ class Query(UUIDModel):
     boost_min: Mapped[int | None] = mapped_column(Integer)
     boost_max: Mapped[int | None] = mapped_column(Integer)
     frequency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    query_modifications: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)  # flags per-query: capital_first, random_caps, typos, trailing_space
 
     project: Mapped[Project] = relationship(back_populates="queries")
 

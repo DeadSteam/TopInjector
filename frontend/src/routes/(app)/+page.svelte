@@ -69,6 +69,13 @@
 	let createFormRegion = $state("");
 	let createFormStrategy = $state("daily");
 	let createFormGroupId = $state<string>("all");
+	let createFormIntegration = $state("default");
+	let createFormScheduleStart = $state("");
+	let createFormScheduleEnd = $state("");
+	let createFormModsCapital = $state(false);
+	let createFormModsRandomCaps = $state(false);
+	let createFormModsTypos = $state(false);
+	let createFormModsTrailingSpace = $state(false);
 	let groupName = $state("");
 	let groupIcon = $state("");
 
@@ -167,15 +174,40 @@
 			domain: createFormDomain,
 			strategy_type: createFormStrategy,
 			daily_limit: 100,
+			integrations: {},
+			scheduling_window: null,
+			query_modifications: {},
 		};
 		if (createFormRegion) data.region = createFormRegion;
 		data.group_id = createFormGroupId === "all" ? null : createFormGroupId;
+
+		// Integration
+		if (createFormIntegration !== "default") {
+			data.integrations.integration_type = createFormIntegration;
+		}
+
+		// Schedule window
+		if (createFormScheduleStart && createFormScheduleEnd) {
+			data.scheduling_window = { start: createFormScheduleStart, end: createFormScheduleEnd };
+		}
+
+		// Query modifications
+		const mods: Record<string, boolean> = {};
+		if (createFormModsCapital) mods.capital_first = true;
+		if (createFormModsRandomCaps) mods.random_caps = true;
+		if (createFormModsTypos) mods.typos = true;
+		if (createFormModsTrailingSpace) mods.trailing_space = true;
+		if (Object.keys(mods).length > 0) data.query_modifications = mods;
 
 		try {
 			await api.projects.create(data);
 			showCreateModal = false;
 			createFormName = ""; createFormDomain = ""; createFormRegion = "";
 			createFormStrategy = "daily"; createFormGroupId = "all";
+			createFormIntegration = "default";
+			createFormScheduleStart = ""; createFormScheduleEnd = "";
+			createFormModsCapital = false; createFormModsRandomCaps = false;
+			createFormModsTypos = false; createFormModsTrailingSpace = false;
 			await loadProjects();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка создания";
@@ -231,21 +263,57 @@
 		editingProjectId = id;
 		createFormName = proj.name;
 		createFormDomain = proj.domain;
-		createFormRegion = proj.region;
-		createFormStrategy = proj.strategy_type;
+		createFormRegion = proj.region || "";
+		createFormStrategy = proj.strategy_type || "daily";
+
+		// Load full project details for advanced fields
+		api.projects.get(id).then(full => {
+			if (full.integrations) createFormIntegration = full.integrations.integration_type || "default";
+			if (full.scheduling_window) {
+				createFormScheduleStart = full.scheduling_window.start || "";
+				createFormScheduleEnd = full.scheduling_window.end || "";
+			}
+			if (full.query_modifications) {
+				createFormModsCapital = !!full.query_modifications.capital_first;
+				createFormModsRandomCaps = !!full.query_modifications.random_caps;
+				createFormModsTypos = !!full.query_modifications.typos;
+				createFormModsTrailingSpace = !!full.query_modifications.trailing_space;
+			}
+		}).catch(() => { /* fallback to defaults */ });
 	}
 
 	async function saveEdit() {
 		if (!editingProjectId || !createFormName || !createFormDomain) return;
 		const proj = projects.find(p => p.id === editingProjectId);
 		if (!proj) return;
+		const data: any = {
+			name: createFormName,
+			domain: createFormDomain,
+			region: createFormRegion || undefined,
+			strategy_type: createFormStrategy,
+		};
+
+		// Integration
+		data.integrations = {};
+		if (createFormIntegration !== "default") data.integrations.integration_type = createFormIntegration;
+
+		// Schedule window
+		if (createFormScheduleStart && createFormScheduleEnd) {
+			data.scheduling_window = { start: createFormScheduleStart, end: createFormScheduleEnd };
+		} else {
+			data.scheduling_window = null;
+		}
+
+		// Query modifications
+		const mods: Record<string, boolean> = {};
+		if (createFormModsCapital) mods.capital_first = true;
+		if (createFormModsRandomCaps) mods.random_caps = true;
+		if (createFormModsTypos) mods.typos = true;
+		if (createFormModsTrailingSpace) mods.trailing_space = true;
+		data.query_modifications = mods;
+
 		try {
-			await api.projects.update(editingProjectId, {
-				name: createFormName,
-				domain: createFormDomain,
-				region: createFormRegion || undefined,
-				strategy_type: createFormStrategy,
-			});
+			await api.projects.update(editingProjectId, data);
 			editingProjectId = null;
 			await loadProjects();
 		} catch (err) {
@@ -576,6 +644,52 @@
 								<option value={group.id}>{group.name}</option>
 							{/each}
 						</select>
+					</div>
+
+					<!-- Integration selector -->
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Интеграция</label>
+						<select bind:value={createFormIntegration} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+							<option value="default">Default (без интеграции)</option>
+							<option value="integration_2">Integration 2</option>
+							<option value="integration_1_testing">Integration 1 (testing)</option>
+							<option value="main_bay_belarus">Main Bay Belarus</option>
+						</select>
+					</div>
+
+					<!-- Schedule window -->
+					<div class="grid grid-cols-2 gap-3">
+						<div>
+							<label class="block text-sm font-medium text-gray-700 mb-1">Время начала (расписание)</label>
+							<input type="time" bind:value={createFormScheduleStart} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-700 mb-1">Время окончания</label>
+							<input type="time" bind:value={createFormScheduleEnd} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						</div>
+					</div>
+
+					<!-- Query modifications -->
+					<div class="border-t border-gray-200 pt-4 mt-2">
+						<p class="text-sm font-medium text-gray-700 mb-2">Модификации запросов</p>
+						<div class="space-y-2">
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={createFormModsCapital} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Каждый с заглавной буквы
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={createFormModsRandomCaps} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Случайные регистр букв (random-caps)
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={createFormModsTypos} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Ввод опечаток (typos)
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={createFormModsTrailingSpace} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Трailing space (пробел в конце)
+							</label>
+						</div>
 					</div>
 				</form>
 

@@ -67,6 +67,17 @@
 	let editingGeo = $state("");
 	let editingClickUrl = $state("");
 
+	// Project settings state
+	let settingIntegration = $state("default");
+	let settingScheduleStart = $state("");
+	let settingScheduleEnd = $state("");
+	let settingModsCapital = $state(false);
+	let settingModsRandomCaps = $state(false);
+	let settingModsTypos = $state(false);
+	let settingModsTrailingSpace = $state(false);
+	let settingsSaving = $state(false);
+	let settingsSaved = $state(false);
+
 	// Proklik modal
 	let showProklik = $state(false);
 	let proklikCount = $state(1);
@@ -82,6 +93,9 @@
 	let boostDailyClicks = $state(10);
 	let boostInterval = $state(3600);
 	let boostStartFromNow = $state(true);
+	let boostScheduleStart = $state("");
+	let boostScheduleEnd = $state("");
+	let boostDayDist: Record<string, boolean> = { mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false };
 	let boostLoading = $state(false);
 
 	const statusColors: Record<string, string> = {
@@ -312,6 +326,7 @@
 
 	async function sendBoost() {
 		if (selectedQueryIds.size === 0 || boostLoading) return;
+		const activeDays = Object.keys(boostDayDist).filter(k => boostDayDist[k]);
 		boostLoading = true;
 		try {
 			await api.projects.boost(projectId, {
@@ -319,11 +334,14 @@
 				daily_clicks: Math.max(1, boostDailyClicks),
 				interval_seconds: boostInterval,
 				start_from_now: boostStartFromNow,
+				schedule_window: (boostScheduleStart && boostScheduleEnd) ? { start: boostScheduleStart, end: boostScheduleEnd } : null,
+				day_distribution: activeDays.length > 0 ? Object.fromEntries(activeDays.map(d => [d, true])) : undefined,
 			});
 			showBoost = false;
 			await loadQueries();
 			await loadQueueStats();
 			selectedQueryIds.clear();
+			boostDayDist = { mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false };
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка буста"; }
 		boostLoading = false;
 	}
@@ -450,7 +468,44 @@
 		if (tab === 'stats') loadRequestTable();
 		if (tab === 'delegates') loadDelegates();
 		if (tab === 'analytics') loadProjectAnalytics();
+		if (tab === 'settings' && project) {
+			settingIntegration = project.integrations?.integration_type || "default";
+			settingScheduleStart = project.scheduling_window?.start || "";
+			settingScheduleEnd = project.scheduling_window?.end || "";
+			const qm = project.query_modifications || {};
+			settingModsCapital = !!qm.capital_first;
+			settingModsRandomCaps = !!qm.random_caps;
+			settingModsTypos = !!qm.typos;
+			settingModsTrailingSpace = !!qm.trailing_space;
+			settingsSaved = false;
+		}
 		startAutoRefresh();
+	}
+
+	async function saveProjectSettings() {
+		if (!projectId) return;
+		settingsSaving = true;
+		try {
+			const data: any = {
+				integrations: {},
+				scheduling_window: null,
+				query_modifications: {},
+			};
+			if (settingIntegration !== "default") data.integrations.integration_type = settingIntegration;
+			if (settingScheduleStart && settingScheduleEnd) data.scheduling_window = { start: settingScheduleStart, end: settingScheduleEnd };
+			const mods: Record<string, boolean> = {};
+			if (settingModsCapital) mods.capital_first = true;
+			if (settingModsRandomCaps) mods.random_caps = true;
+			if (settingModsTypos) mods.typos = true;
+			if (settingModsTrailingSpace) mods.trailing_space = true;
+			data.query_modifications = mods;
+			await api.projects.update(projectId, data);
+			settingsSaved = true;
+			setTimeout(() => { settingsSaved = false; }, 3000);
+			// Reload project to reflect changes
+			await loadProject();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка сохранения настроек"; }
+		settingsSaving = false;
 	}
 
 	onDestroy(() => { stopAutoRefresh(); });
@@ -464,9 +519,21 @@
 		{ key: "delegates", label: "Делегаты" },
 		{ key: "markers", label: "Маркеры" },
 		{ key: "webmaster", label: "ВебМастер" },
+		{ key: "settings", label: "Настройки" },
 	];
 
 	const strategyLabels: Record<string, string> = { daily: "Ежедневная", monthly: "Ежемесячная", hourly: "Почасовая" };
+
+	// Day distribution labels
+	const dayLabels = [
+		{ key: "mon", label: "Пн" },
+		{ key: "tue", label: "Вт" },
+		{ key: "wed", label: "Ср" },
+		{ key: "thu", label: "Чт" },
+		{ key: "fri", label: "Пт" },
+		{ key: "sat", label: "Сб" },
+		{ key: "sun", label: "Вс" },
+	];
 
 	function groupLink(groupId: string | null) {
 		if (!groupId) return null;
@@ -1091,7 +1158,71 @@
 					</div>
 				</div>
 			{/if}
-		{/if}
+
+			{:else if activeTab === 'settings'}
+				<!-- Settings tab: integrations, schedule window, query modifications -->
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+					<h3 class="text-lg font-semibold text-gray-900 mb-4">Настройки проекта</h3>
+
+					{#if settingsSaved}
+						<div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">Настройки сохранены</div>
+					{/if}
+
+					<!-- Integration selector -->
+					<div class="mb-6">
+						<label class="block text-sm font-medium text-gray-700 mb-1">Интеграция</label>
+						<select bind:value={settingIntegration} class="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+							<option value="default">Default (без интеграции)</option>
+							<option value="integration_2">Integration 2</option>
+							<option value="integration_1_testing">Integration 1 (testing)</option>
+							<option value="main_bay_belarus">Main Bay Belarus</option>
+						</select>
+					</div>
+
+					<!-- Schedule window -->
+					<div class="mb-6">
+						<label class="block text-sm font-medium text-gray-700 mb-2">Окно расписания</label>
+						<div class="grid grid-cols-2 gap-3 max-w-sm">
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Начало</label>
+								<input type="time" bind:value={settingScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Окончание</label>
+								<input type="time" bind:value={settingScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+							</div>
+						</div>
+					</div>
+
+					<!-- Query modifications -->
+					<div class="mb-6">
+						<label class="block text-sm font-medium text-gray-700 mb-2">Модификации запросов</label>
+						<div class="space-y-2 max-w-md">
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={settingModsCapital} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Каждый с заглавной буквы
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={settingModsRandomCaps} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Случайные регистр букв (random-caps)
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={settingModsTypos} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Ввод опечаток (typos)
+							</label>
+							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+								<input type="checkbox" bind:checked={settingModsTrailingSpace} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+								Trailing space (пробел в конце)
+							</label>
+						</div>
+					</div>
+
+					<button onclick={saveProjectSettings} disabled={settingsSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
+						{settingsSaving ? 'Сохранение…' : 'Сохранить настройки'}
+					</button>
+				</div>
+
+			{/if}
 	{/if}
 </div>
 
@@ -1124,7 +1255,7 @@
 <!-- Boost modal -->
 {#if showBoost && project}
 	<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showBoost = false; }}>
-		<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md m-4">
+		<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg m-4">
 			<h3 class="text-lg font-semibold text-gray-900 mb-1">Буст — ускоренный прогон</h3>
 			<p class="text-sm text-gray-500 mb-4">Выбранные: {selectedQueryIds.size} запросов</p>
 
@@ -1138,6 +1269,35 @@
 					<input type="number" bind:value={boostInterval} min="60" max="86400" step="60" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
 					<p class="text-xs text-gray-400 mt-1">Минимум 60 секунд. Например, 3600 = 1 клик/час</p>
 				</div>
+
+				<!-- Boost schedule window -->
+				<div class="border-t border-gray-200 pt-3 mt-3">
+					<p class="text-sm font-medium text-gray-700 mb-2">Окно расписания буста</p>
+					<div class="grid grid-cols-2 gap-3">
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Начало</label>
+							<input type="time" bind:value={boostScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Окончание</label>
+							<input type="time" bind:value={boostScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+						</div>
+					</div>
+				</div>
+
+				<!-- Day distribution -->
+				<div class="border-t border-gray-200 pt-3">
+					<p class="text-sm font-medium text-gray-700 mb-2">Распределение по дням недели</p>
+					<p class="text-xs text-gray-500 mb-2">Выберите дни для буста (оставьте пустым — каждый день)</p>
+					<div class="flex gap-2 flex-wrap">
+						{#each dayLabels as day}
+							<button onclick={() => boostDayDist[day.key] = !boostDayDist[day.key]} class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${boostDayDist[day.key] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+								{day.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+
 				<div class="flex items-center gap-2">
 					<input type="checkbox" bind:checked={boostStartFromNow} id="boost_now" class="rounded border-gray-300 text-orange-600 focus:ring-orange-500" />
 					<label for="boost_now" class="text-sm text-gray-700">Начать расписание с сейчас, иначе — с завтра</label>

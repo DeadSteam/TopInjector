@@ -10,16 +10,16 @@ S02,source-breakdown-checkbox,yes,yes,built,Three sources: strategy/autoburst/pr
 S03,project-create-form,yes,yes,skeleton-only,Missing: integration selector/schedule window/query-modifications
 S03,multigeo-with-percentage,yes,yes,not-built,"geo_settings JSON column exists; multigeo UI not built"
 S03,preset-city-packs,yes,,not-built,Need city code DB (Yandex geo codes)
-S03,query-modifications,yes,yes,not-built,JSON flags: capital-first/random-caps/typos/trailing-space — model + UI missing
-S03,schedule-window,yes,yes,not-built,"Time window (e.g. 7-22); model needs scheduling_window field"
-S03,boost-tab-from-project-settings,yes,yes,not-built,Time window + day distribution for autoburst
+S03,query-modifications,yes,yes,built,JSON flags: capital_first/random_caps/typos/trailing_space — model + UI in create/edit modal
+S03,schedule-window,yes,yes,built,"Time window (start/end time pickers) — stored as JSON in scheduling_window column"
+S03,boost-tab-from-project-detail,yes,yes,built,"Time window + day distribution checkboxes in boost modal; model uses JSON"
 S04,project-header-section,yes,,skeleton-only,Missing: group link/activity toggle/edit button/view settings
 S04,actions-menu,yes,yes,not-built,"Missing: copy/delegate/auto-stop/clear-queue/collect-frequency/delete"
 S04,instant-click-proklik,yes,yes,not-built,Options: random count/per-query variants — model + UI needed
 S04,per-query-geo-override,yes,yes,not-built,"Query.geo JSON column exists; per-query edit UI missing"
 S04,bulk-query-edit-modal,yes,,not-built,"Geo override/clicks-change/apply-click-url/delete for selected queries"
 S04,boost-from-project-detail,yes,,not-built,"Select queries→Boost→count+interval→redistribute now/tomorrow"
-S04,info-panel-dashboard,yes,yes,not-built,Strategy stats/source breakdown/queue statuses/quick links
+S04,info-panel-dashboard,yes,yes,built,"Strategy stats/source breakdown/queue statuses/quick links + Settings tab (integrations/schedule/window/query-mods)"
 S04,query-table-columns,yes,yes,partial,Missing: inline-edit clicks/day, avg position, frequency
 S04,query-filters,yes,,not-built,"Position range/frequency range/text search — model has columns"
 S05,analytics-page,yes,yes,built,Missing: report export/summary filter/chart/editable-table/daily drill-down modal

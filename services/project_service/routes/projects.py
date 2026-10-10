@@ -166,6 +166,10 @@ async def create_project(
         daily_limit=body.get("daily_limit", 500),
         region=body.get("region"),
         group_id=group_id,
+        geo_settings=body.get("geo_settings", {}),
+        integrations=body.get("integrations", {}),
+        scheduling_window=body.get("scheduling_window"),
+        query_modifications=body.get("query_modifications", {}),
     )
     project = await project_repo.create(project)
     return {"id": str(project.id), "name": project.name, "domain": project.domain}
@@ -259,6 +263,8 @@ async def get_project(
         "group_name": project.group.name if project.group else None,  # type: ignore[attr-defined]
         "geo_settings": project.geo_settings or {},
         "integrations": project.integrations or {},
+        "scheduling_window": project.scheduling_window,
+        "query_modifications": project.query_modifications or {},
     }
 
 
@@ -384,7 +390,7 @@ async def update_query(
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
     # Only allowed fields
-    allowed_fields = ("geo", "daily_clicks", "click_url", "url", "position", "frequency")
+    allowed_fields = ("geo", "daily_clicks", "click_url", "url", "position", "frequency", "query_modifications")
     for key in allowed_fields:
         if key in body and hasattr(query, key):
             setattr(query, key, body[key])
