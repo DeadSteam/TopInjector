@@ -4,7 +4,7 @@ S02,project-groups-create,yes,yes,skeleton-only,Missing: group UI with icons
 S02,delegation-with-badges,yes,yes,partial-badge,"Model exists (ProjectDelegate) but frontend is skeleton"
 S02,import-export-projects,yes,yes,skeleton-only,CSV endpoints exist per git log 7691c43
 S02,mass-edit-toolbar,yes,yes,not-built,Missing: start/stop/delegate/bulk-edit/auto-stop/delete for multiple
-S02,context-menu-3-dots,yes,,not-built,Missing: edit/copy(auto-stop/delete)
+S02,context-menu-3-dots,yes,,built,"Right-click / 3-dot menu on listing: Open, Edit (opens project detail), Start/Stop toggle, Copy (with queries via backend), Delete"
 S02,overdue-toggle,yes,yes,built,Overdue filter endpoint + toggle in listing filters
 S02,source-breakdown-checkbox,yes,yes,built,Three sources: strategy/autoburst/proklik — UI toggle + columns added in listing
 S03,project-create-form,yes,yes,skeleton-only,Missing: integration selector/schedule window/query-modifications
@@ -15,9 +15,9 @@ S03,schedule-window,yes,yes,built,"Time window (start/end time pickers) — stor
 S03,boost-tab-from-project-detail,yes,yes,built,"Time window + day distribution checkboxes in boost modal; model uses JSON"
 S04,project-header-section,yes,,skeleton-only,Missing: group link/view settings
 S04,actions-menu,yes,yes,built,"Copy project, clear queue dropdown on project detail page + backend endpoints"
-S04,instant-click-proklik,yes,yes,not-built,Options: random count/per-query variants — model + UI needed
+S04,instant-click-proklik,yes,yes,built,"Proklik modal with count input, all/selected query modes, purple button on queries toolbar"
 S04,per-query-geo-override,yes,yes,partial,Query.geo JSON column exists; per-query edit UI in inline edit on queries tab
-S04,bulk-query-edit-modal,yes,,partial,"Backend: POST /{project_id}/queries/bulk-update (query_ids + daily_clicks/geo/click_url). Frontend API method exists; bulk modal UI not built yet"
+S04,bulk-query-edit-modal,yes,,built,"Modal with daily_clicks, geo JSON editor, click_url toggle; bulk delete selected queries via toolbar buttons"
 S04,boost-from-project-detail,yes,,built,"Select queries→Boost→count+interval→redistribute now/tomorrow (existing boost modal)"
 S04,info-panel-dashboard,yes,yes,built,"Strategy stats/source breakdown/queue statuses/quick links + Settings tab (integrations/schedule/window/query-mods)"
 S04,query-table-columns,yes,yes,partial,Missing: inline-edit clicks/day, avg position, frequency

@@ -1,6 +1,15 @@
 # Build Log — GhostLab Replica
 
-## S02 Listing Enhancements
+## S02 Context Menu + S04 Proklik + Bulk Edit Modal
+**Date:** 2026-10-10
+**Status:** Built
+**Done:**
+- Context menu on project listing: right-click / 3-dot menu with Open, Edit (goes to detail), Start/Stop toggle, Copy (with queries via backend copyProject), Delete
+- Instant click proklik: modal with count input, all/selected query modes, purple button on queries toolbar
+- Bulk edit modal on project detail: daily_clicks setter, geo JSON editor, click_url toggle + apply; bulk delete selected queries toolbar buttons
+- Frontend: openBulkEdit function + bulkUpdate API call via api.projects.bulkUpdateQueries + bulkDeleteQueries
+
+## S08 Profile Settings — Messenger, External Services, Password
 **Date:** 2026-10-10
 **Status:** Built
 **Done:**
