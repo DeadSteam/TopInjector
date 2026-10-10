@@ -5,7 +5,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.session import get_session
@@ -150,4 +150,66 @@ async def get_tracking_positions(
         "project_id": project_id or "",
         "tracking": tracking,
         "summary": summary,
+    }
+
+
+@router.get("/top-ranges")
+async def get_top_ranges(
+    project_id: str = Query(default=""),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return click distribution by TOP position ranges and avg position per range."""
+    pid = _parse_pid(project_id)
+
+    # Build WHERE clause
+    where_conditions = [QueueTask.status == "completed"]
+    if pid:
+        where_conditions.append(QueueTask.project_id == pid)
+
+    # Query completed tasks with positions, grouped into TOP ranges
+    from sqlalchemy import literal_column
+
+    range_label = case(
+        (QueueTask.position <= 3, "1–3 (Топ-3)"),
+        (QueueTask.position <= 5, "4–5"),
+        (QueueTask.position <= 10, "6–10"),
+        (QueueTask.position <= 20, "11–20"),
+        (QueueTask.position <= 50, "21–50"),
+        else_=">50",
+    )
+
+    result = await session.execute(
+        select(range_label.label("label"),
+               func.count(QueueTask.id).label("clicks"),
+               func.avg(QueueTask.position).label("avg_pos"))
+        .where(*where_conditions)
+        .where(QueueTask.position.isnot(None))
+        .group_by(range_label)
+        .order_by(func.min(QueueTask.position))
+    )
+
+    rows = result.all()
+    ranges = [
+        {
+            "label": row[0],
+            "clicks": row[1] or 0,
+            "avg_position": round(float(row[2]), 2) if row[2] is not None else None,
+        }
+        for row in rows
+    ]
+
+    # Ensure order from highest to lowest range for display
+    range_order = ["1–3 (Топ-3)", "4–5", "6–10", "11–20", "21–50", ">50"]
+    ranges.sort(key=lambda r: range_order.index(r["label"]) if r["label"] in range_order else 99)
+
+    total_clicks = sum(r["clicks"] for r in ranges)
+    overall_avg = sum(
+        r["avg_position"] * r["clicks"] for r in ranges if r["avg_position"] is not None
+    ) / total_clicks if total_clicks > 0 else None
+
+    return {
+        "project_id": project_id or "",
+        "total_clicks": total_clicks,
+        "ranges": ranges,
+        "overall_avg_position": round(overall_avg, 2) if overall_avg is not None else None,
     }

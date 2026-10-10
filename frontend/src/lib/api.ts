@@ -245,6 +245,11 @@ export const api = {
 		if (projectId) path += `?project_id=${projectId}`;
 		return fetcher(path);
 	},
+	topRanges: (projectId?: string) => {
+		let path = "/api/analytics/top-ranges";
+		if (projectId) path += `?project_id=${projectId}`;
+		return fetcher(path);
+	},
 	},
 	users: {
 		profile: () => fetcher("/api/users/profile"),

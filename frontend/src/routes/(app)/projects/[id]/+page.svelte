@@ -384,6 +384,21 @@
 
 	function cancelEdit() { editingQueryId = null; }
 
+	async function quickIncrDaily(queryId: string, current: number) {
+		try {
+			await api.projects.updateQuery(projectId, queryId, { daily_clicks: current + 1 });
+			await loadQueries();
+		} catch { /* silent */ }
+	}
+
+	async function quickDecrDaily(queryId: string, current: number) {
+		if (current <= 0) return;
+		try {
+			await api.projects.updateQuery(projectId, queryId, { daily_clicks: current - 1 });
+			await loadQueries();
+		} catch { /* silent */ }
+	}
+
 	// Proklik
 	async function sendProklik() {
 		if (proklikLoading) return;
@@ -876,7 +891,7 @@
 										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px]"><a href={query.url} target="_blank" class="hover:underline">{query.url ? (query.url.length > 20 ? query.url.slice(0, 20) + '…' : query.url) : '—'}</a></td>
 										<td class="px-4 py-3 text-gray-600 text-xs max-w-[150px] truncate" title={query.geo ? JSON.stringify(query.geo) : ''}>{query.geo && Object.keys(query.geo).length > 0 ? (typeof query.geo === 'string' ? query.geo : JSON.stringify(query.geo)) : '—'}</td>
 										<td class="px-4 py-3">
-											<button onclick={() => startEdit(query)} class="text-sm font-medium text-gray-900 hover:text-blue-600 cursor-pointer">{query.daily_clicks}</button>
+											<div class="flex items-center gap-1 justify-end"><button onclick={(e) => { e.stopPropagation(); quickDecrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-red-50 hover:text-red-600 transition-colors font-bold">−</button><span class="text-sm font-medium tabular-nums w-12 text-center cursor-pointer hover:text-blue-600" title="Нажмите для редактирования">{query.daily_clicks}</span><button onclick={(e) => { e.stopPropagation(); quickIncrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-green-50 hover:text-green-600 transition-colors font-bold">+</button></div>
 										</td>
 										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px] text-xs"><a href={query.click_url} target="_blank" class="hover:underline">{query.click_url ? (query.click_url.length > 20 ? query.click_url.slice(0, 20) + '…' : query.click_url) : '—'}</a></td>
 										<td class="px-4 py-3">

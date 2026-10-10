@@ -29,6 +29,10 @@
 	let trackingData = $state<TrackingPoint[]>([]);
 	let trackingSummary = $state<PositionSummary | null>(null);
 
+	// TOP ranges data
+	let topRangesData = $state<any>(null);
+	let topRangesLoading = $state(true);
+
 	// Project selector for scoped analytics
 	let projects = $state<any[]>([]);
 	let selectedProject = $state<string>("");
@@ -77,19 +81,33 @@
 		trackingLoading = false;
 	}
 
+	async function loadTopRanges() {
+		topRangesLoading = true;
+		try {
+			if (selectedProject) {
+				topRangesData = await api.analytics.topRanges(selectedProject);
+			} else {
+				topRangesData = await api.analytics.topRanges();
+			}
+		} catch {
+			topRangesData = null;
+		} finally {
+			topRangesLoading = false;
+		}
+	}
+
 	async function loadAll() {
 		await Promise.all([
 			loadSummary(),
 			loadTimeline(),
 			loadTracking(),
+			loadTopRanges(),
 		]);
 	}
 
 	onMount(async () => {
 		await loadProjects();
-		await loadSummary();
-		await loadTimeline();
-		await loadTracking();
+		await Promise.all([loadSummary(), loadTimeline(), loadTracking(), loadTopRanges()]);
 
 		refreshInterval = window.setInterval(() => {
 			loadAll();
@@ -272,6 +290,53 @@
 			<div class="flex justify-between mt-2 text-xs text-gray-400 px-2">
 				<span>{formatDate(timelineData[0]?.date)}</span>
 				<span>{formatDate(timelineData[timelineData.length - 1]?.date)}</span>
+			</div>
+		{/if}
+	</div>
+
+	<!-- TOP ranges chart -->
+	<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+		<h3 class="font-medium text-gray-900 mb-4">Клики по диапазону позиций</h3>
+
+		{#if topRangesLoading}
+			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">Загрузка...</div>
+		{:else if topRangesData && topRangesData.ranges.length > 0}
+			<div class="grid grid-cols-6 gap-3 mb-4">
+				{#each topRangesData.ranges as range}
+					<div class="bg-gray-50 rounded-lg p-3 text-center">
+						<p class="text-xs text-gray-500 mb-1">{range.label}</p>
+						<p class="text-xl font-bold text-gray-900">{range.clicks}</p>
+						{#if range.avg_position}
+							<p class="text-xs text-blue-600 mt-1">ср: #{range.avg_position}</p>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			<!-- Horizontal bar chart -->
+			<div class="space-y-2">
+				{#each topRangesData.ranges as range}
+					<div class="flex items-center gap-3">
+						<span class="text-xs text-gray-500 w-24 text-right shrink-0">{range.label}</span>
+						<div class="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden relative">
+							<div
+								class="h-full rounded-full transition-all"
+								style="width: calc({range.clicks} / {topRangesData.total_clicks || 1} * 100%); background: {range.label.includes('Топ') ? '#16a34a' : range.label.includes('4–5') ? '#2563eb' : range.label.includes('6–10') ? '#3b82f6' : range.label.includes('11–20') ? '#8b5cf6' : range.label.includes('21–50') ? '#f59e0b' : '#6b7280'};"
+							></div>
+							<span class="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
+								{range.clicks} ({topRangesData.total_clicks > 0 ? ((range.clicks / topRangesData.total_clicks) * 100).toFixed(1) : 0}%)
+							</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+			{#if topRangesData.overall_avg_position}
+				<div class="mt-4 pt-3 border-t border-gray-200 text-sm text-gray-500">
+					Общая средняя позиция по всем кликам: <span class="font-bold text-blue-600">#{topRangesData.overall_avg_position}</span>
+				</div>
+			{/if}
+		{:else}
+			<div class="h-32 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400 text-sm">
+				Нет данных о позициях. Данные появятся после выполнения задач с зафиксированными позициями.
 			</div>
 		{/if}
 	</div>
