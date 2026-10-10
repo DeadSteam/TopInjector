@@ -1068,3 +1068,195 @@ async def get_source_breakdown(
             src: bd.get("pending", 0) for src, bd in breakdown.items()
         },
     }
+
+
+# --- Project actions (copy / auto-stop / clear-queue) ----------------------- #
+
+@router.post("/{project_id}/copy")
+async def copy_project(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Copy a project with all its queries and strategy tasks."""
+    import shutil as _shutil
+    from sqlalchemy import select as sa_select
+
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    new_name = body.get("name", f"{project.name} (copy)")  # type: ignore[attr-defined]
+    new_project = Project(
+        id=uuid4(),
+        user_id=project.user_id,
+        name=new_name,
+        domain=project.domain,
+        strategy_type=project.strategy_type,
+        daily_limit=project.daily_limit,
+        region=project.region,
+        group_id=project.group_id,
+        geo_settings=project.geo_settings or {},
+        integrations=project.integrations or {},
+        scheduling_window=project.scheduling_window,
+        query_modifications=project.query_modifications or {},
+    )
+    session.add(new_project)
+    await session.flush()  # assign ID
+
+    # Copy queries
+    queries_result = await session.execute(
+        sa_select(_QueryModel).where(_QueryModel.project_id == UUID(project_id))
+    )
+    old_queries = queries_result.scalars().all()
+    for q in old_queries:
+        new_q = _QueryModel(
+            id=uuid4(),
+            project_id=new_project.id,  # type: ignore[attr-defined]
+            text=q.text,
+            url=q.url,
+            click_url=q.click_url or "",
+            geo=q.geo or {},
+            daily_clicks=q.daily_clicks,
+            position=q.position,
+            frequency=q.frequency or 1,
+            query_modifications=q.query_modifications or {},
+        )
+        session.add(new_q)
+
+    # Copy strategy tasks (reset status to pending)
+    tasks_result = await session.execute(
+        sa_select(QueueTask).where(
+            QueueTask.project_id == UUID(project_id),
+            QueueTask.source == "strategy",
+        )
+    )
+    old_tasks = tasks_result.scalars().all()
+    for t in old_tasks:
+        new_t = QueueTask(
+            id=uuid4(),
+            project_id=new_project.id,  # type: ignore[attr-defined]
+            query_id=t.query_id,
+            url=t.url or "",
+            status="pending",
+            source="strategy",
+            created_at=t.created_at,
+        )
+        session.add(new_t)
+
+    await session.commit()
+    return {"id": str(new_project.id), "name": new_name}
+
+
+@router.post("/{project_id}/auto-stop")
+async def auto_stop_project(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Mark project as inactive — stops strategy scheduling."""
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.is_active = False  # type: ignore[attr-defined]
+    await session.commit()
+    return {"stopped": True}
+
+
+@router.post("/{project_id}/activate")
+async def activate_project(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Mark project as active."""
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.is_active = True  # type: ignore[attr-defined]
+    await session.commit()
+    return {"activated": True}
+
+
+@router.post("/{project_id}/clear-queue")
+async def clear_queue(
+    project_id: str,
+    body: dict = {},
+    session: AsyncSession = Depends(get_session),
+):
+    """Clear queue tasks by status filter."""
+    from sqlalchemy import update as sa_update
+
+    target_statuses = body.get("statuses", ["pending", "in_progress"])  # type: ignore[arg-type]
+    await session.execute(
+        sa_update(QueueTask)
+        .where(
+            and_(
+                QueueTask.project_id == UUID(project_id),  # type: ignore[arg-type]
+                QueueTask.status.in_(target_statuses),  # type: ignore[attr-defined]
+            )
+        )
+        .values(status="pending")
+    )
+    await session.commit()
+
+    # Count remaining pending tasks
+    count_result = await session.execute(
+        select(func.count(QueueTask.id)).where(
+            and_(
+                QueueTask.project_id == UUID(project_id),  # type: ignore[arg-type]
+                QueueTask.status.in_(target_statuses),  # type: ignore[attr-defined]
+            )
+        )
+    )
+    remaining = count_result.scalar() or 0
+    return {"cleared": True, "remaining": remaining}
+
+
+# --- Click detail for daily drill-down -------------------------------------- #
+
+@router.get("/{project_id}/clicks")
+async def get_project_clicks(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    date_str: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    geo: str | None = Query(default=None),
+):
+    """Return click events for a project with geo/source/position breakdown."""
+    from datetime import datetime as _dt
+
+    query = select(QueueTask).where(QueueTask.project_id == UUID(project_id))
+
+    if date_str:
+        # Filter by date (YYYY-MM-DD)
+        try:
+            target_date = _dt.fromisoformat(date_str).date()
+            next_date = target_date.__class__(target_date.year + 1, 1, 1)
+        except ValueError:
+            target_date = None
+
+        if target_date:
+            query = query.where(
+                and_(  # type: ignore[assignment]
+                    QueueTask.created_at >= _dt.combine(target_date, _dt.min.time()).replace(tzinfo=timezone.utc),
+                    QueueTask.created_at < _dt.combine(next_date, _dt.min.time()).replace(tzinfo=timezone.utc),
+                )
+            )
+
+    if source:
+        query = query.where(QueueTask.source == source)  # type: ignore[assignment]
+
+    result = await session.execute(query.order_by(QueueTask.created_at.desc().nullslast()))
+    tasks = result.scalars().all()
+
+    return [
+        {
+            "id": str(t.id),
+            "url": t.click_url or "",
+            "status": t.status,
+            "source": t.source or "",
+            "position": t.position,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "geo": t.geo or {},
+        }
+        for t in tasks
+    ]

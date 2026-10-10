@@ -15,6 +15,7 @@
 
 	let tasks = $state<QueueTask[]>([]);
 	let filterStatus = $state<string>("all");
+	let filterSource = $state<string>("all");
 	let loading = $state(true);
 	let error = $state("");
 	let stats = $state({ pending: 0, in_progress: 0, completed: 0, not_found: 0, stuck: 0 });
@@ -198,6 +199,26 @@
 			</button>
 		</div>
 
+		<!-- Source filter -->
+		<div class="mb-4 flex gap-2">
+			<button onclick={() => { filterSource = 'all'; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterSource === 'all' ? 'bg-gray-800 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+				Все источники
+			</button>
+			<button onclick={() => { filterSource = 'strategy'; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterSource === 'strategy' ? 'bg-purple-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+				Стратегия
+			</button>
+			<button onclick={() => { filterSource = 'autoburst'; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterSource === 'autoburst' ? 'bg-orange-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+				Автобёрст
+			</button>
+			<button onclick={() => { filterSource = 'proklik'; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterSource === 'proklik' ? 'bg-pink-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+				Проклик
+			</button>
+		</div>
+
 		<!-- Task list -->
 		<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
 			<div class="overflow-x-auto">
@@ -214,7 +235,7 @@
 					</thead>
 					<tbody>
 						{#each filteredTasks as task}
-							<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+							<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer" onclick={() => openTaskDetail(task.id)}>
 								<td class="px-4 py-3 font-mono text-xs">{task.id.slice(0, 8)}</td>
 								<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={task.click_url} target="_blank" class="hover:underline">{task.click_url}</a></td>
 								<td class="px-4 py-3"><span class="text-xs bg-gray-100 px-2 py-1 rounded">{sourceLabels[task.source] || task.source}</span></td>
@@ -247,3 +268,22 @@
 		</div>
 	{/if}
 </div>
+<!-- Task detail modal -->
+{#if showTaskDetail && taskDetail}
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) { showTaskDetail = false; taskDetail = null; } }}>
+<div class="bg-white rounded-xl shadow-2xl max-w-lg w-full">
+<div class="flex items-center justify-between p-4 border-b border-gray-200">
+<h3 class="text-lg font-semibold text-gray-900">Task Detail</h3>
+<button onclick={() => { showTaskDetail = false; taskDetail = null; }} class="text-gray-400 hover:text-gray-600">&times;</button>
+</div>
+<div class="p-4 space-y-3">
+<div><p class="text-xs text-gray-500 mb-1">URL</p><p class="text-sm text-gray-900 break-all">{taskDetail.click_url}</p></div>
+<div class="grid grid-cols-2 gap-3">
+<div><p class="text-xs text-gray-500">Source</p><span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700">{sourceLabels[taskDetail.source] || taskDetail.source}</span></div>
+<div><p class="text-xs text-gray-500">Status</p><span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium {statusColors[taskDetail.status]}">{statusLabels[taskDetail.status]}</span></div>
+</div>
+{#if taskDetail.position}<div><p class="text-xs text-gray-500">Position</p><p class="text-sm text-gray-900">#{taskDetail.position}</p></div>{/if}
+<div><p class="text-xs text-gray-500">Created</p><p class="text-sm text-gray-900">{new Date(taskDetail.created_at).toLocaleString("ru-RU")}</p></div>
+</div>
+<div class="p-4 border-t border-gray-200 flex justify-end"><button onclick={() => { showTaskDetail = false; taskDetail = null; }} class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors">Close</button></div>
+</div></div>{/if}

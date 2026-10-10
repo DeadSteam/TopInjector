@@ -176,6 +176,20 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/overdue-count`),
 		sourceBreakdown: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/source-breakdown`),
+		copyProject: (projectId: string, data: any) =>
+			fetcher(`/api/projects/${projectId}/copy`, { method: "POST", body: JSON.stringify(data) }),
+		clearQueue: (projectId: string, data: any) =>
+			fetcher(`/api/projects/${projectId}/clear-queue`, { method: "POST", body: JSON.stringify(data) }),
+		getClicks: (projectId: string, params?: { date_str?: string; source?: string; geo?: string }) => {
+			let path = `/api/projects/${projectId}/clicks`;
+			if (params) {
+				const qs = new URLSearchParams();
+				if (params.date_str) qs.set("date_str", params.date_str);
+				if (params.source) qs.set("source", params.source);
+				path += "?" + qs.toString();
+			}
+			return fetcher(path);
+		},
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),

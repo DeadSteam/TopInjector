@@ -32,3 +32,21 @@
 - Boost modal expanded: time window pickers + day-of-week distribution grid (Mon-Sun toggle buttons)
 
 **Harder than expected:** Editing from listing page needs full project fetch (API call to `/projects/{id}`) since listing only returns summary data. Settings tab saves via `PUT /projects/{id}` with new field groups. Day distribution stored as JSON object in API payload.
+
+## S04 Actions Menu + Copy Project + Clear Queue
+**Date:** 2026-10-10
+**Status:** Built
+**Done:**
+- Backend: POST /projects/{id}/copy (copies project+queries+strategy tasks), POST /projects/{id}/auto-stop, POST /projects/{id}/activate, POST /projects/{id}/clear-queue, GET /projects/{id}/clicks
+- Frontend: Actions dropdown menu (3-dot button) on project detail header with copy/clear-queue options
+
+## S05 Daily Drill-Down Modal
+**Date:** 2026-10-10
+**Status:** Built
+- Analytics timeline chart bars clickable -> opens drill-down modal with geo/source/position/time breakdown per click
+
+## S06 Queue Page Enhancements + Task Detail Modal
+**Date:** 2026-10-10
+**Status:** Built
+- Source filter buttons (All/Strategy/Autoburst/Proklik) alongside status filters
+- Queue table rows clickable -> task detail modal with URL, source, status, position, created time

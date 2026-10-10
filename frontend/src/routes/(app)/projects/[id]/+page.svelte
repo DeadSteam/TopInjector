@@ -78,6 +78,25 @@
 	let settingsSaving = $state(false);
 	let settingsSaved = $state(false);
 
+	// Bulk edit modal
+	let showBulkEdit = $state(false);
+	let bulkEditGeoJson = $state("");
+	let bulkEditDailyClicks = $state(0);
+	let bulkLoading = $state(false);
+
+	// Task detail modal (queue drill-down)
+	let showTaskDetail = $state(false);
+	let taskDetail: any = null;
+
+	// Daily drill-down modal
+	let showDrillDown = $state(false);
+	let drillDate = $state("");
+	let drillClicks: any[] = [];
+	let drillLoading = $state(false);
+
+	// Copy project modal state
+	let copyProjectName = $state("");
+
 	// Proklik modal
 	let showProklik = $state(false);
 	let proklikCount = $state(1);
@@ -268,6 +287,47 @@
 			await api.projects.delete(projectId);
 			window.location.href = "/";
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка удаления"; }
+	}
+
+	// Actions menu state
+	let showActionsMenu = $state(false);
+
+	async function copyProject() {
+		const name = prompt("Имя скопированного проекта:");
+		if (!name) return;
+		try {
+			const data = await api.projects.copyProject(projectId, { name });
+			alert(`Проект скопирован: ${data.id}`);
+			window.location.href = `/projects/${data.id}`;
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка копирования"; }
+	}
+
+	async function clearQueueAction() {
+		if (!confirm("Очистить все pending и in_progress задачи?")) return;
+		try {
+			const data = await api.projects.clearQueue(projectId, { statuses: ["pending", "in_progress"] });
+			await loadQueueStats();
+			alert(`Очищено. Осталось: ${data.remaining}`);
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка очистки очереди"; }
+	}
+
+	async function openDailyDrillDown(dateStr: string) {
+		drillDate = dateStr;
+		showDrillDown = true;
+		drillLoading = true;
+		drillClicks = [];
+		try {
+			drillClicks = await api.projects.getClicks(projectId, { date_str: dateStr });
+		} catch (err) {
+			error = err instanceof Error ? err.message : "Ошибка загрузки кликов";
+		} finally {
+			drillLoading = false;
+		}
+	}
+
+	async function openTaskDetail(taskId: string) {
+		showTaskDetail = true;
+		taskDetail = null; // will be filled when clicked
 	}
 
 	// Inline edit
@@ -584,8 +644,8 @@
 					</div>
 				</div>
 
-				<!-- Activity toggle -->
-				<div class="flex flex-col gap-2">
+				<!-- Activity toggle & actions -->
+				<div class="flex flex-col gap-2 relative">
 					<button onclick={toggleActivity} class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors {project.is_active ? 'bg-gray-100 hover:bg-gray-200 text-gray-700' : 'bg-green-600 hover:bg-green-700 text-white'}">
 						<!-- Switch icon -->
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -597,7 +657,21 @@
 						</svg>
 						{project.is_active ? 'Остановить' : 'Запустить'}
 					</button>
-					<button onclick={deleteProject} class="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 hover:bg-red-100 text-red-600 transition-colors">Удалить проект</button>
+					<div class="flex gap-2">
+						<button onclick={deleteProject} class="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 hover:bg-red-100 text-red-600 transition-colors">Удалить</button>
+						<div class="relative">
+							<button onclick={() => showActionsMenu = !showActionsMenu} class="px-2 py-2 rounded-lg text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors">
+								<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><circle cx="5" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="15" cy="10" r="1.5"/></svg>
+							</button>
+							{#if showActionsMenu}
+								<div class="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1">
+									<button onclick={() => { copyProject(); showActionsMenu = false; }} class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700">Копировать проект</button>
+									<button onclick={() => { clearQueueAction(); showActionsMenu = false; }} class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700">Очистить очередь</button>
+									<button onclick={() => { showActionsMenu = false; }} class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700">Перейти</button>
+								</div>
+							{/if}
+						</div>
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -774,7 +848,7 @@
 					{#let maxCount = Math.max(...timelineData.map((d: any) => d.count), 1)}
 						<div class="flex items-end gap-0.5 h-48 px-1">
 							{#each timelineData as point, i}
-								<div class="flex-1 flex flex-col items-center group relative">
+								<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
 									<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
 										{new Date(point.date).toLocaleDateString('ru-RU')}: {point.count} кликов
 									</div>
@@ -1312,4 +1386,47 @@
 			</div>
 		</div>
 	</div>
+{/if}
+
+
+<!-- Daily drill-down modal -->
+{#if showDrillDown}
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) showDrillDown = false; }}>
+	<div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
+		<div class="flex items-center justify-between p-4 border-b border-gray-200">
+			<h3 class="text-lg font-semibold text-gray-900">&#1040;&#1083;&#1086;&#1090;&#1077;&#1083;&#1103; &#1087;&#1088;&#1080; {drillDate}</h3>
+			<button onclick={() => showDrillDown = false} class="text-gray-400 hover:text-gray-600">&times;</button>
+		</div>
+		<div class="p-4 overflow-y-auto max-h-[calc(90vh-80px)]">
+			{#if drillLoading}
+				<p class="text-sm text-gray-500 text-center py-8">&#1053;&#1072; &#1085;&#1072;&#1089;&#1097;&#1072;&#1085;&#1080;&#1077;...</p>
+			{:else}
+				<p class="text-sm text-gray-600 mb-3">&#1053;&#1086;&#1075;&#1084;&#1072; &#1085;&#1090;&#1086;&#1074;&#1086;&#1084;: <strong>{drillClicks.length}</strong></p>
+				{#if drillClicks.length === 0}
+					<p class="text-sm text-gray-500 text-center py-4">&#1057;&#1072;&#1079;&#1084;&#1086;&#1090;&#1090;&#1072; &#1074;&#1085;&#1077;&#1078;&#1085;&#1077;&#1075;&#1086;</p>
+				{:else}
+					<div class="space-y-2">
+						{#each drillClicks as click}
+							<div class="border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors cursor-pointer" onclick={() => openTaskDetail(click.id)}>
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0 flex-1">
+										<p class="text-sm text-gray-900 truncate">{click.url}</p>
+										<div class="flex items-center gap-2 mt-1">
+											<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700">{statusLabels[click.source] || click.source}</span>
+											<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {click.status === &#x27;completed&#x27; ? &#x27;bg-green-50 text-green-700&#x27; : click.status === &#x27;not_found&#x27; ? &#x27;bg-red-50 text-red-700&#x27; : &#x27;bg-yellow-50 text-yellow-700&#x27;}">{statusLabels[click.status] || click.status}</span>
+											{#if click.position}
+												<span class="text-xs text-gray-500">&#1055;&#1086;&#1076;: {click.position}</span>
+												{/if}
+										</div>
+									</div>
+									<span class="text-xs text-gray-400 whitespace-nowrap">{click.created_at ? new Date(click.created_at).toLocaleTimeString(&#x27;ru-RU&#x27;) : &#x27;&#x27;}</span>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+		</div>
+	</div>
+</div>
 {/if}
