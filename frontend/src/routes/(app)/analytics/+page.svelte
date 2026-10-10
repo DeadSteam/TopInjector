@@ -38,6 +38,40 @@
 	let selectedProject = $state<string>("");
 	let projectLoading = $state(true);
 
+	// Inline daily_limit edit from analytics
+	let showDailyLimitModal = $state(false);
+	let editingProjectName = $state("");
+	let newDailyLimit = $state(0);
+	let dailyLimitSaving = $state(false);
+	let dailyLimitSaved = $state(false);
+
+	function openEditDailyLimit(project: any) {
+		editingProjectName = project.name;
+		newDailyLimit = project.daily_limit || 500;
+		showDailyLimitModal = true;
+	}
+
+	async function saveDailyLimit() {
+		if (!selectedProject || newDailyLimit < 1) return;
+		dailyLimitSaving = true;
+		try {
+			await api.projects.update(selectedProject, { daily_limit: Math.min(newDailyLimit, 100000) });
+			dailyLimitSaved = true;
+			await loadProjects();
+			await loadSummary();
+			setTimeout(() => { dailyLimitSaved = false; }, 3000);
+		} catch {
+			/* silent */
+		} finally {
+			dailyLimitSaving = false;
+		}
+	}
+
+	function closeDailyLimitModal() {
+		showDailyLimitModal = false;
+		dailyLimitSaved = false;
+	}
+
 	let refreshInterval = $state<number | null>(null);
 
 	async function loadProjects() {
@@ -253,9 +287,14 @@
 			<p class="text-sm text-gray-500">Средняя позиция</p>
 			<p class="text-3xl font-bold text-blue-600 mt-1">{stats?.avg_position ?? '—'}</p>
 		</div>
-		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm relative group">
 			<p class="text-sm text-gray-500">Активных проектов</p>
 			<p class="text-3xl font-bold text-gray-900 mt-1">{projects.length}</p>
+			{#if selectedProject}
+				<button onclick={() => { const p = projects.find(x => x.id === selectedProject); if (p) openEditDailyLimit(p); }} class="absolute top-4 right-4 text-xs text-blue-600 hover:text-blue-800 opacity-0 group-hover:opacity-100 transition-opacity" title="Редактировать лимит кликов">
+					✏️ Лимит
+				</button>
+			{/if}
 		</div>
 	</div>
 
@@ -443,4 +482,52 @@
 			Экспорт отчёта (CSV)
 		</button>
 	</div>
+
+	<!-- Daily limit edit modal -->
+	{#if showDailyLimitModal}
+		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onmousedown={(e) => e.target === e.currentTarget && closeDailyLimitModal()}>
+			<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
+				<div class="flex items-center justify-between mb-4">
+					<h2 class="text-lg font-semibold text-gray-900">Редактировать лимит кликов</h2>
+					<button onclick={closeDailyLimitModal} class="text-gray-400 hover:text-gray-600">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+					</button>
+				</div>
+
+				{#if dailyLimitSaved}
+					<div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">Лимит успешно обновлён</div>
+				{/if}
+
+				<div class="space-y-4">
+					<div class="p-3 bg-gray-50 rounded-lg">
+						<p class="text-sm font-medium text-gray-900">{editingProjectName}</p>
+						<p class="text-xs text-gray-500 mt-1">Текущий лимит: <span class="font-bold">{newDailyLimit} кликов/день</span></p>
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Новый ежедневный лимит</label>
+						<input type="number" bind:value={newDailyLimit} min="1" max="100000" step="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						<p class="text-xs text-gray-400 mt-1">Максимум: 100 000 кликов/день</p>
+					</div>
+
+					<!-- Quick presets -->
+					<div>
+						<p class="text-xs text-gray-500 mb-2">Быстрый выбор:</p>
+						<div class="flex flex-wrap gap-2">
+							{#each [10, 50, 100, 200, 500, 1000, 5000] as preset}
+								<button onclick={() => newDailyLimit = preset} class="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 transition-colors">{preset}</button>
+							{/each}
+						</div>
+					</div>
+				</div>
+
+				<div class="flex justify-end gap-3 mt-6">
+					<button onclick={closeDailyLimitModal} class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+					<button onclick={saveDailyLimit} disabled={dailyLimitSaving || newDailyLimit < 1} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
+						{dailyLimitSaving ? 'Сохранение…' : 'Применить лимит'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

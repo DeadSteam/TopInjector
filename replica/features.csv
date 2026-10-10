@@ -25,7 +25,7 @@ S04,query-filters,yes,,built,"Position range (from/to), frequency range (min), t
 S05,analytics-page,yes,yes,built,Missing: report export/summary filter/chart/editable-table/daily drill-down modal
 S05,analytics-charts,yes,yes,built,"TOP ranges chart: clicks distribution by position range (1-3, 4-5, 6-10, 11-20, 21-50, >50) with horizontal bars + avg position per range; timeline bar chart; SVG position tracking line chart"
 S05,daily-drill-down-modal,yes,yes,built,"Click bars in analytics timeline open drill-down modal with geo/source/position/time breakdown"
-S05,inline-edit-clicks-from-analytics,yes,yes,not-built,Clicks/day edit per project with confirmation
+S05,inline-edit-clicks-from-analytics,yes,yes,built,"Daily limit edit per project from analytics page: hover button on 'Active projects' card opens modal with preset amounts (10-5000), number input (max 100k), confirmation + reload. PUT /projects/{id} with daily_limit"
 S06,queue-page,yes,yes,built,"Status filters + source filters (strategy/autoburst/proklik) /task detail modal/clear queue"
 S07,status-bar,yes,built,built,"Overdue counter, today clicks planned vs completed, balance display in layout header"
 S08,profile-settings,yes,,partial,"Built: profile name edit, messenger settings (Telegram webhook + Max Connector ID), external services config (XML River UserID+APK, XMLStock multi-key), password change. Missing: avatar upload"
