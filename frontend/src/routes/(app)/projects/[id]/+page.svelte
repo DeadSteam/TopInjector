@@ -82,6 +82,9 @@
 	let showBulkEdit = $state(false);
 	let bulkEditGeoJson = $state("");
 	let bulkEditDailyClicks = $state(0);
+	let bulkEditApplyClickUrl = $state("");
+	let bulkEditApplyClickUrlToggle = $state(false);
+	let bulkDeleteSelected = $state(false);
 	let bulkLoading = $state(false);
 
 	// Task detail modal (queue drill-down)
@@ -415,6 +418,47 @@
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка удаления запроса"; }
 	}
 
+	// Bulk update queries
+	async function bulkUpdate() {
+		if (selectedQueryIds.size === 0 || bulkLoading) return;
+		bulkLoading = true;
+		try {
+			const updates: Record<string, any> = { query_ids: [...selectedQueryIds] };
+			if (bulkEditDailyClicks > 0) updates.daily_clicks = bulkEditDailyClicks;
+			if (bulkEditGeoJson.trim()) {
+				try { updates.geo = JSON.parse(bulkEditGeoJson); } catch { error = "Неверный JSON для гео"; }
+			}
+			if (bulkEditApplyClickUrlToggle && bulkEditApplyClickUrl.trim()) updates.click_url = bulkEditApplyClickUrl;
+			await api.projects.bulkUpdateQueries(projectId, updates);
+			selectedQueryIds.clear();
+			showBulkEdit = false;
+			bulkEditGeoJson = ""; bulkEditDailyClicks = 0; bulkEditApplyClickUrl = ""; bulkEditApplyClickUrlToggle = false;
+			await loadQueries();
+			await loadQueueStats();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка массового обновления"; }
+		bulkLoading = false;
+	}
+
+	// Bulk delete selected queries
+	async function bulkDeleteQueries() {
+		if (selectedQueryIds.size === 0) return;
+		if (!confirm(`Удалить ${selectedQueryIds.size} запрос(ов)?`)) return;
+		try {
+			for (const qid of selectedQueryIds) {
+				await api.projects.deleteQuery(projectId, qid);
+			}
+			selectedQueryIds.clear();
+			await loadQueries();
+			await loadQueueStats();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка массового удаления"; }
+	}
+
+	function openBulkEdit() {
+		if (selectedQueryIds.size === 0) return;
+		showBulkEdit = true;
+		bulkEditDailyClicks = 0; bulkEditGeoJson = ""; bulkEditApplyClickUrl = ""; bulkEditApplyClickUrlToggle = false;
+	}
+
 	function toggleChartView() { showChart = !showChart; }
 
 	function getChartDims() {
@@ -714,7 +758,8 @@
 							</label>
 							<button onclick={handleExport} class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors font-medium">Экспорт CSV</button>
 						{#if selectedQueryIds.size > 0}
-							<button onclick={() => { boostDailyClicks = queries.length > 0 ? Math.max(...queries.filter(q => selectedQueryIds.has(q.id)).map(q => q.daily_clicks)) : 10; showBoost = true; }} class="px-3 py-1.5 text-sm bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium">Буст (выбранные: {selectedQueryIds.size})</button>
+							<button onclick={openBulkEdit} class="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium">Ред-кт ({selectedQueryIds.size})</button>
+							<button onclick={bulkDeleteQueries} class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium">Удалить ({selectedQueryIds.size})</button>
 							<button onclick={() => selectedQueryIds.clear()} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Снять все</button>
 						{:else}
 							<button onclick={selectAll} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Выбрать все</button>
@@ -1426,6 +1471,44 @@
 					</div>
 				{/if}
 			{/if}
+		</div>
+	</div>
+</div>
+{/if}
+<!-- Bulk Edit Modal -->
+{#if showBulkEdit}
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) showBulkEdit = false; }}>
+	<div class="bg-white rounded-xl shadow-2xl max-w-lg w-full m-4 max-h-[90vh] overflow-y-auto">
+		<div class="flex items-center justify-between p-4 border-b border-gray-200">
+			<h3 class="text-lg font-semibold text-gray-900">Массовое редактирование ({selectedQueryIds.size})</h3>
+			<button onclick={() => showBulkEdit = false} class="text-gray-400 hover:text-gray-600">&times;</button>
+		</div>
+		<div class="p-4 space-y-4">
+			<div>
+				<label class="block text-sm font-medium text-gray-700 mb-1">Кликов/день (новое значение)</label>
+				<input type="number" bind:value={bulkEditDailyClicks} min="0" placeholder="Не менять" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+				<p class="text-xs text-gray-400 mt-1">Установите значение для изменения daily_clicks у выбранных запросов</p>
+			</div>
+			<div>
+				<label class="block text-sm font-medium text-gray-700 mb-1">Гео (JSON, опционально)</label>
+				<textarea bind:value={bulkEditGeoJson} rows="3" placeholder='{"country": "ru"}' class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
+				<p class="text-xs text-gray-400 mt-1">Заменит geo у выбранных запросов (должен быть валидным JSON)</p>
+			</div>
+			<div>
+				<label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+					<input type="checkbox" bind:checked={bulkEditApplyClickUrlToggle} class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+					Установить click_url для выбранных запросов
+				</label>
+				{#if bulkEditApplyClickUrlToggle}
+					<input type="url" bind:value={bulkEditApplyClickUrl} placeholder="https://example.com/click" class="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+				{/if}
+			</div>
+			<div class="flex gap-2 pt-2">
+				<button onclick={() => showBulkEdit = false} class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+				<button onclick={bulkUpdate} disabled={bulkLoading} class="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-lg text-sm font-medium transition-colors">
+					{bulkLoading ? 'Обновление...' : 'Обновить'}
+				</button>
+			</div>
 		</div>
 	</div>
 </div>

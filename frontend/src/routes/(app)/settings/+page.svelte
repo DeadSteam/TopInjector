@@ -10,6 +10,25 @@
 	let newTokenName = $state("");
 	let copiedToken = $state("");
 
+	// Messenger settings
+	let telegramWebhookUrl = $state("");
+	let maxConnectorId = $state("");
+	let messengerLoading = $state(false);
+	let messengerSaved = $state(false);
+
+	// External services
+	let xmlRiverUserId = $state("");
+	let xmlRiverApk = $state("");
+	let xmlStockEntries: Array<{ name: string; api_key: string }> = $state([]);
+	let externalLoading = $state(false);
+	let externalSaved = $state(false);
+
+	// Password change
+	let currentPassword = $state("");
+	let newPassword = $state("");
+	let confirmNewPassword = $state("");
+	let passwordChanged = $state(false);
+
 	async function loadSettings() {
 		try {
 			profile = await api.users.profile();
@@ -50,6 +69,63 @@
 	}
 
 	onMount(() => { loadSettings(); });
+
+	async function loadMessenger() {
+		try {
+			const data = await api.users.messengerSettings();
+			telegramWebhookUrl = data.telegram_webhook_url || "";
+			maxConnectorId = data.max_connector_id || "";
+		} catch {}
+	}
+
+	async function saveMessenger() {
+		messengerLoading = true;
+		try {
+			await api.users.updateMessengerSettings({
+				telegram_webhook_url: telegramWebhookUrl,
+				max_connector_id: maxConnectorId,
+			});
+			messengerSaved = true;
+			setTimeout(() => { messengerSaved = false; }, 3000);
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка сохранения"; }
+		messengerLoading = false;
+	}
+
+	async function loadExternalServices() {
+		try {
+			const data = await api.users.externalServices();
+			xmlRiverUserId = data.xml_river?.user_id || "";
+			xmlRiverApk = data.xml_river?.apk || "";
+			xmlStockEntries = data.xml_stock || [{ name: "", api_key: "" }];
+		} catch {}
+	}
+
+	async function saveExternalServices() {
+		externalLoading = true;
+		try {
+			const xmlRiver = (xmlRiverUserId || xmlRiverApk) ? { user_id: xmlRiverUserId, apk: xmlRiverApk } : null;
+			const stock = xmlStockEntries.filter(e => e.name.trim());
+			await api.users.updateExternalServices({ xml_river: xmlRiver || undefined, xml_stock: stock });
+			externalSaved = true;
+			setTimeout(() => { externalSaved = false; }, 3000);
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка сохранения"; }
+		externalLoading = false;
+	}
+
+	function addStockEntry() { xmlStockEntries = [...xmlStockEntries, { name: "", api_key: "" }]; }
+	function removeStockEntry(i: number) { xmlStockEntries.splice(i, 1); }
+
+	async function changePassword() {
+		if (newPassword !== confirmNewPassword) { error = "Пароли не совпадают"; return; }
+		try {
+			await api.users.changePassword({ current_password: currentPassword, new_password: newPassword });
+			passwordChanged = true;
+			currentPassword = ""; newPassword = ""; confirmNewPassword = "";
+			setTimeout(() => { passwordChanged = false; }, 3000);
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка смены пароля"; }
+	}
+
+	onMount(() => { loadSettings(); loadMessenger(); loadExternalServices(); });
 </script>
 
 <div class="p-6">
@@ -79,19 +155,92 @@
 				</form>
 			</div>
 
-			<!-- Integration settings -->
+			<!-- Messenger integration -->
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-				<h2 class="text-lg font-semibold text-gray-900 mb-4">Интеграции</h2>
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Мессенджеры</h2>
+				{#if messengerSaved}
+					<div class="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">Сохранено</div>
+				{/if}
 				<div class="space-y-4">
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">Яндекс Метрика — ID счётчика</label>
-						<input type="text" placeholder="123456789" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						<label class="block text-sm font-medium text-gray-700 mb-1">Telegram — Webhook URL</label>
+						<input type="url" bind:value={telegramWebhookUrl} placeholder="https://your-bot.example.com/webhook" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						<p class="text-xs text-gray-400 mt-1">URL для получения webhook уведомлений от Telegram бота</p>
 					</div>
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">Яндекс Вебмастер — ID проекта</label>
-						<input type="text" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						<label class="block text-sm font-medium text-gray-700 mb-1">Max — Connector ID</label>
+						<input type="text" bind:value={maxConnectorId} placeholder="connector-uuid" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+						<p class="text-xs text-gray-400 mt-1">ID коннектора для интеграции с Max</p>
+					</div>
+					<button onclick={saveMessenger} disabled={messengerLoading} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
+						{messengerLoading ? 'Сохранение…' : 'Сохранить'}
+					</button>
+				</div>
+			</div>
+
+			<!-- External services -->
+			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Внешние сервисы</h2>
+				{#if externalSaved}
+					<div class="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">Сохранено</div>
+				{/if}
+
+				<!-- XML River -->
+				<div class="mb-6">
+					<h3 class="text-sm font-medium text-gray-900 mb-2">XML River</h3>
+					<p class="text-xs text-gray-400 mb-3">UserID + APK для XML River прокси</p>
+					<div class="space-y-2">
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">User ID</label>
+							<input type="text" bind:value={xmlRiverUserId} placeholder="your-user-id" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">APK</label>
+							<input type="text" bind:value={xmlRiverApk} placeholder="your-apk-key" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" />
+						</div>
 					</div>
 				</div>
+
+				<!-- XML Stock -->
+				<div>
+					<h3 class="text-sm font-medium text-gray-900 mb-2">XML Stock</h3>
+					<p class="text-xs text-gray-400 mb-3">Множественные ключи API</p>
+					{#each xmlStockEntries as entry, i}
+						<div class="flex gap-2 mb-2 items-start">
+							<input type="text" bind:value={entry.name} placeholder="Имя ключа" class="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+							<input type="text" bind:value={entry.api_key} placeholder="API Key" class="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" />
+							<button onclick={() => removeStockEntry(i)} class="px-2 py-1.5 text-red-500 hover:bg-red-50 rounded-lg text-xs">Удалить</button>
+						</div>
+					{/each}
+					<button onclick={addStockEntry} class="px-3 py-1.5 border border-dashed border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400 rounded-lg text-xs transition-colors">+ Добавить ключ</button>
+				</div>
+
+				<button onclick={saveExternalServices} disabled={externalLoading} class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
+					{externalLoading ? 'Сохранение…' : 'Сохранить'}
+				</button>
+			</div>
+
+			<!-- Password change -->
+			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Смена пароля</h2>
+				{#if passwordChanged}
+					<div class="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">Пароль успешно изменён</div>
+				{/if}
+				<form onsubmit={(e) => { e.preventDefault(); changePassword(); }} class="space-y-3">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Текущий пароль</label>
+						<input type="password" bind:value={currentPassword} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Новый пароль</label>
+						<input type="password" bind:value={newPassword} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Подтвердите новый пароль</label>
+						<input type="password" bind:value={confirmNewPassword} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+					</div>
+					<button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors">Сменить пароль</button>
+				</form>
 			</div>
 
 			<!-- API Tokens -->

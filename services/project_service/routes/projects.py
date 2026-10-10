@@ -1260,3 +1260,83 @@ async def get_project_clicks(
         }
         for t in tasks
     ]
+
+
+# --- Bulk query operations -------------------------------------------------- #
+
+
+@router.post("/{project_id}/queries/bulk-update")
+async def bulk_update_queries(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Bulk-update queries by ID set (daily_clicks, geo, click_url)."""
+    from services.auth_service.domain.models import User
+
+    user = UUID(body.get("user_id", "00000000-0000-0000-0000-000000000000"))
+    try:
+        uid = UUID(str(user))
+    except (ValueError, TypeError):
+        # Accept user_id as string if present
+        uid = UUID(body.get("user_id", "00000000-0000-0000-0000-000000000000"))
+
+    try:
+        proj_uuid = UUID(project_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+
+    # Verify ownership
+    from sqlalchemy import select as sa_select
+    q = await session.execute(
+        sa_select(Project).where(Project.id == proj_uuid, Project.user_id == uid)
+    )
+    if not q.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    query_ids: list[str] = body.get("query_ids", [])
+    if not query_ids:
+        raise HTTPException(status_code=400, detail="query_ids is required")
+
+    updates: dict = {}
+    if "daily_clicks" in body:
+        dc = int(body["daily_clicks"])
+        if dc < 0:
+            raise HTTPException(status_code=400, detail="daily_clicks must be >= 0")
+        updates["daily_clicks"] = dc
+    if "geo" in body:
+        try:
+            _json.loads(_json.dumps(body["geo"]))  # validate JSON serializable
+            updates["geo"] = body["geo"]
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid geo JSON")
+    if "click_url" in body:
+        cu = str(body["click_url"])
+        if not cu:
+            raise HTTPException(status_code=400, detail="click_url cannot be empty")
+        updates["click_url"] = cu
+    if "text" in body:
+        updates["text"] = str(body["text"])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updated = 0
+    for qid in query_ids:
+        try:
+            quuid = UUID(qid)
+        except (ValueError, TypeError):
+            continue
+        row = await session.execute(
+            sa_select(_QueryModel).where(
+                _QueryModel.id == quuid, _QueryModel.project_id == proj_uuid
+            )
+        )
+        model = row.scalar_one_or_none()
+        if model:
+            for k, v in updates.items():
+                setattr(model, k, v)
+            updated += 1
+
+    await session.commit()
+    return {"updated": updated}

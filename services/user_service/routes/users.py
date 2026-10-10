@@ -97,3 +97,108 @@ async def create_api_token(
         "token": project_token.token_string,
         "created_at": project_token.created_at.isoformat() if project_token.created_at else None,
     }
+
+
+# --- User settings: messenger, external services, password ------------------ #
+
+
+@router.get("/settings/messenger")
+async def get_messenger_settings(
+    user: User = Depends(get_current_user),
+):
+    """Get messenger integration settings (JSON)."""
+    # Telegram webhook URL stored in user settings
+    settings: dict = getattr(user, "messenger_settings", {}) or {}
+    return {
+        "telegram_webhook_url": settings.get("telegram_webhook_url", ""),
+        "max_connector_id": settings.get("max_connector_id", ""),
+    }
+
+
+@router.post("/settings/messenger")
+async def update_messenger_settings(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update messenger integration settings (JSON)."""
+    from services.auth_service.domain.models import User as UserModel
+
+    current = getattr(user, "messenger_settings", {}) or {}
+    if "telegram_webhook_url" in body:
+        current["telegram_webhook_url"] = body["telegram_webhook_url"]
+    if "max_connector_id" in body:
+        current["max_connector_id"] = body["max_connector_id"]
+    setattr(user, "messenger_settings", current)
+    # Update via SQLAlchemy directly since MessengerSettings may not be a model
+    from sqlalchemy import select as sa_select
+    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = q.scalar_one_or_none()
+    if u:
+        u.messenger_settings = current  # type: ignore[attr-defined]
+    await session.commit()
+    await session.refresh(user)
+    return {"updated": True, "settings": getattr(user, "messenger_settings", {})}
+
+
+@router.get("/settings/external-services")
+async def get_external_services(
+    user: User = Depends(get_current_user),
+):
+    """Get external services configuration (XML River / XMLStock) as JSON."""
+    settings: dict = getattr(user, "external_services", {}) or {}
+    return {
+        "xml_river": settings.get("xml_river"),
+        "xml_stock": settings.get("xml_stock"),
+    }
+
+
+@router.post("/settings/external-services")
+async def update_external_services(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update external services configuration (XML River / XMLStock)."""
+    from sqlalchemy import select as sa_select
+    from services.auth_service.domain.models import User as UserModel
+
+    current = getattr(user, "external_services", {}) or {}
+    if "xml_river" in body:
+        current["xml_river"] = body["xml_river"]
+    if "xml_stock" in body:
+        current["xml_stock"] = body["xml_stock"]
+    setattr(user, "external_services", current)
+    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = q.scalar_one_or_none()
+    if u:
+        u.external_services = current  # type: ignore[attr-defined]
+    await session.commit()
+    await session.refresh(user)
+    return {"updated": True, "settings": getattr(user, "external_services", {})}
+
+
+@router.post("/password")
+async def change_password(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Change user password. Requires current_password + new_password."""
+    from passlib.context import CryptContext
+
+    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    current_pw = body.get("current_password", "")
+    new_pw = body.get("new_password", "")
+
+    if not current_pw or not new_pw:
+        raise HTTPException(status_code=400, detail="current_password and new_password are required")
+    if len(new_pw) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+    if not pwd_ctx.verify(current_pw, user.hashed_password):  # type: ignore[attr-defined]
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    user.hashed_password = pwd_ctx.hash(new_pw)  # type: ignore[attr-defined]
+    await session.commit()
+    return {"updated": True}

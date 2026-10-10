@@ -596,10 +596,14 @@
 	<!-- Context menu -->
 	{#if contextMenu}
 		<div class="fixed z-50" style="left: {contextMenu.x}px; top: {contextMenu.y}px">
-			<div class="bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48">
+			<div class="bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-56">
 				<a href="/projects/{contextMenu.projectId}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Открыть</a>
-				<button onclick={() => copyProject(contextMenu.projectId)} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Копировать</button>
-				<button onclick={() => deleteProject(contextMenu.projectId)} class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+				<button onclick={() => { editProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Редактировать</button>
+				<div class="my-1 border-t border-gray-100"></div>
+				<button onclick={async () => { const p = projects.find(x => x.id === contextMenu.projectId); if (p) await toggleActive(contextMenu.projectId, p.is_active); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm {projects.find(x => x.id === contextMenu.projectId)?.is_active ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}">{projects.find(x => x.id === contextMenu.projectId)?.is_active ? 'Остановить' : 'Запустить'}</button>
+				<button onclick={async () => { await copyProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Копировать (с запросами)</button>
+				<div class="my-1 border-t border-gray-100"></div>
+				<button onclick={async () => { await deleteProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Удалить</button>
 			</div>
 		</div>
 	{/if}

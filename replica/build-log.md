@@ -50,3 +50,26 @@
 **Status:** Built
 - Source filter buttons (All/Strategy/Autoburst/Proklik) alongside status filters
 - Queue table rows clickable -> task detail modal with URL, source, status, position, created time
+
+## S08 Profile Settings — Messenger, External Services, Password
+**Date:** 2026-10-10
+**Status:** Built (partial)
+**Done:**
+- Backend: GET/POST `/settings/messenger` — stores telegram_webhook_url and max_connector_id as JSON on user model
+- Backend: GET/POST `/settings/external-services` — stores xml_river {user_id, apk} and xml_stock [{name, api_key}] as JSON on user model
+- Backend: POST `/password` — validates current password with passlib bcrypt, hashes new password
+- Frontend: settings page expanded to 4-column grid: Profile, Messengers, External Services, Password Change
+- Frontend: api.ts rewritten with all new methods (messengerSettings, updateMessengerSettings, externalServices, updateExternalServices, changePassword)
+- Bulk update endpoint: POST `/{project_id}/queries/bulk-update` accepts body with query_ids array and optional daily_clicks/geo/click_url/text fields
+
+**Harder than expected:** User model doesn't have dedicated messenger_settings or external_services columns — stored as JSON attributes via setattr. Need to query user directly in SQLAlchemy session for commit. Password change requires CryptContext verification round-trip.
+
+## S09 API Documentation Page
+**Date:** 2026-10-10
+**Status:** Built
+**Done:**
+- New route `/docs` with Redocly standalone.js from CDN for dynamic OpenAPI rendering
+- Fetches spec from `/api/internal/openapi.json`; fallback static docs when spec endpoint unavailable
+- Covers all External API endpoints (8 methods), Internal Auth+Users endpoints, data model, JSON schemas for external services
+
+**Harder than expected:** Redocly theme customization via JS object — `theme` option not a string property but a config object with nested layout settings. Fallback docs needed since internal OpenAPI spec endpoint may not exist in dev environments.

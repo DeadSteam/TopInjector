@@ -17,7 +17,7 @@ S04,project-header-section,yes,,skeleton-only,Missing: group link/view settings
 S04,actions-menu,yes,yes,built,"Copy project, clear queue dropdown on project detail page + backend endpoints"
 S04,instant-click-proklik,yes,yes,not-built,Options: random count/per-query variants — model + UI needed
 S04,per-query-geo-override,yes,yes,partial,Query.geo JSON column exists; per-query edit UI in inline edit on queries tab
-S04,bulk-query-edit-modal,yes,,not-built,"Geo override/clicks-change/apply-click-url/delete for selected queries"
+S04,bulk-query-edit-modal,yes,,partial,"Backend: POST /{project_id}/queries/bulk-update (query_ids + daily_clicks/geo/click_url). Frontend API method exists; bulk modal UI not built yet"
 S04,boost-from-project-detail,yes,,built,"Select queries→Boost→count+interval→redistribute now/tomorrow (existing boost modal)"
 S04,info-panel-dashboard,yes,yes,built,"Strategy stats/source breakdown/queue statuses/quick links + Settings tab (integrations/schedule/window/query-mods)"
 S04,query-table-columns,yes,yes,partial,Missing: inline-edit clicks/day, avg position, frequency
@@ -28,7 +28,7 @@ S05,daily-drill-down-modal,yes,yes,built,"Click bars in analytics timeline open 
 S05,inline-edit-clicks-from-analytics,yes,yes,not-built,Clicks/day edit per project with confirmation
 S06,queue-page,yes,yes,built,"Status filters + source filters (strategy/autoburst/proklik) /task detail modal/clear queue"
 S07,status-bar,yes,built,built,"Overdue counter, today clicks planned vs completed, balance display in layout header"
-S08,profile-settings,yes,,skeleton-only,"Missing: avatar/messengers(API key/password change/external-services"
-S08,messenger-integration,yes,,not-built,Telegram + Max connection for notifications
-S08,external-services-config,yes,,not-built,XML River (UserID+APK) + XMLStock (multiple keys)
-S09,api-docs,yes,,not-built,Stoplight OpenAPI docs page
+S08,profile-settings,yes,,partial,"Built: profile name edit, messenger settings (Telegram webhook + Max Connector ID), external services config (XML River UserID+APK, XMLStock multi-key), password change. Missing: avatar upload"
+S08,messenger-integration,yes,yes,built,"Backend: GET/POST /settings/messenger (telegram_webhook_url, max_connector_id). Frontend: settings page messenger section with save"
+S08,external-services-config,yes,yes,built,"Backend: GET/POST /settings/external-services (xml_river {user_id,apk}, xml_stock [{name,api_key}]). Frontend: settings page external services section with XML River fields + dynamic XML Stock entries"
+S09,api-docs,yes,yes,built,"Redocly OpenAPI documentation page at /docs. Renders dynamic spec from /api/internal/openapi.json with fallback static docs covering External API (8 endpoints), Internal Auth+Users endpoints, data model, and JSON schemas"

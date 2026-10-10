@@ -190,6 +190,8 @@ export const api = {
 			}
 			return fetcher(path);
 		},
+		bulkUpdateQueries: (projectId: string, data: any) =>
+			fetcher(`/api/projects/${projectId}/queries/bulk-update`, { method: "POST", body: JSON.stringify(data) }),
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),
@@ -254,6 +256,14 @@ export const api = {
 				method: "POST",
 				body: JSON.stringify({ name }),
 			}),
+		messengerSettings: () => fetcher("/api/users/settings/messenger"),
+		updateMessengerSettings: (data: any) =>
+			fetcher("/api/users/settings/messenger", { method: "POST", body: JSON.stringify(data) }),
+		externalServices: () => fetcher("/api/users/settings/external-services"),
+		updateExternalServices: (data: any) =>
+			fetcher("/api/users/settings/external-services", { method: "POST", body: JSON.stringify(data) }),
+		changePassword: (data: any) =>
+			fetcher("/api/users/password", { method: "POST", body: JSON.stringify(data) }),
 	},
 	notifications: {
 		list: () => fetcher("/api/notifications/"),
