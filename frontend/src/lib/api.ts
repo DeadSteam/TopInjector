@@ -210,6 +210,7 @@ export const api = {
 			if (projectId) path += `?project_id=${projectId}`;
 			return fetcher(path);
 		},
+		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),

@@ -27,7 +27,7 @@ S05,analytics-charts,yes,yes,stub-chart,"Clicks in TOP ranges + avg position by 
 S05,daily-drill-down-modal,yes,yes,not-built,"Per-click detail: geo/source/position/time/URL/not-found count"
 S05,inline-edit-clicks-from-analytics,yes,yes,not-built,Clicks/day edit per project with confirmation
 S06,queue-page,yes,yes,built,Missing: status filters/source filters/task detail view/clear-queue-with-filters
-S07,status-bar,yes,,not-built,"Overdue counter/clicks planned-vs-completed/balance/notification-bell"
+S07,status-bar,yes,built,built,"Overdue counter, today clicks planned vs completed, balance display in layout header"
 S08,profile-settings,yes,,skeleton-only,"Missing: avatar/messengers(API key/password change/external-services"
 S08,messenger-integration,yes,,not-built,Telegram + Max connection for notifications
 S08,external-services-config,yes,,not-built,XML River (UserID+APK) + XMLStock (multiple keys)

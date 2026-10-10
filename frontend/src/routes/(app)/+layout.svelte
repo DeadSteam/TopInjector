@@ -19,6 +19,12 @@
 	let searchingGlobal = $state(false);
 	let searchDebounce = 0;
 
+	// Dashboard status bar
+	let dashboardStats = $state<{ overdue: number; today_planned: number; today_completed: number; balance: number }>({
+		overdue: 0, today_planned: 0, today_completed: 0, balance: 0
+	});
+	let statsLoading = $state(true);
+
 	onMount(async () => {
 		const token = localStorage.getItem("token");
 		if (!token) {
@@ -35,6 +41,7 @@
 
 		activeRoute = window.location.pathname;
 		loadNotifications();
+		loadDashboardStats();
 
 		// Global Ctrl+E shortcut
 		function onKeydown(e: KeyboardEvent) {
@@ -57,6 +64,15 @@
 			notifications = data.notifications || [];
 			unreadCount = (data.notifications || []).filter((n: any) => !n.is_read).length;
 		} catch {}
+	}
+
+	async function loadDashboardStats() {
+		try {
+			dashboardStats = await api.queue.dashboardStats();
+			statsLoading = false;
+		} catch {
+			statsLoading = false;
+		}
 	}
 
 	async function markAllRead() {
@@ -188,6 +204,34 @@
 
 	<!-- Main content -->
 	<main class="flex-1 overflow-auto relative">
+		<!-- Status bar — thin strip above page content -->
+		<div class="flex items-center gap-4 px-4 py-1.5 bg-white border-b border-gray-200 text-xs flex-wrap">
+			{#if statsLoading}
+				<span class="text-gray-400">Загрузка...</span>
+			{:else}
+				<!-- Overdue counter -->
+				<a href="/queue" class="flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium transition-colors {dashboardStats.overdue > 0 ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'text-gray-400'}">
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+					Просрочено: {dashboardStats.overdue}
+				</a>
+
+				<!-- Today clicks -->
+				<span class="flex items-center gap-1.5 text-gray-400">
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0v8m0-8l-8 8-4-4-6 6"/></svg>
+					Сегодня: {dashboardStats.today_completed} / {dashboardStats.today_planned} кликов
+				</span>
+
+				<!-- Balance -->
+				<span class="flex items-center gap-1.5 text-gray-400">
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+					Баланс: {dashboardStats.balance} ₽
+				</span>
+
+				<!-- Spacer -->
+				<span class="flex-1"></span>
+			{/if}
+		</div>
+
 		<slot />
 
 		<!-- Global search modal (Ctrl+E) -->
