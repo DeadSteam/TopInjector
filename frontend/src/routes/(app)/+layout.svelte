@@ -133,7 +133,7 @@
 		<nav class="space-y-1 flex-1">
 			{#each getNavItems() as item}
 				<a href={item.path} class={(isActive(item.path) ? "bg-white/10 text-white" : "text-gray-400 hover:text-white hover:bg-white/5") + " flex items-center gap-3 px-3 py-2 rounded-lg transition-colors"}>
-					<div innerHTML={item.icon}></div>
+					<span>{@html item.icon}</span>
 					<span>{item.label}</span>
 				</a>
 			{/each}

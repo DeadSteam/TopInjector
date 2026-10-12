@@ -55,6 +55,7 @@
 
 	let analyticsSummary = $state<any>(null);
 	let timelineData = $state<TimelinePoint[]>([]);
+	const maxTimelineCount = (timelineData.length > 0 ? Math.max(...timelineData.map((d: any) => d.count), 1) : 1);
 	let trackingData = $state<TrackingPoint[]>([]);
 	let positionSummary = $state<PositionSummary | null>(null);
 
@@ -451,7 +452,7 @@
 		boostLoading = false;
 	}
 
-	function deleteQuery(queryId: string) {
+	async function deleteQuery(queryId: string) {
 		if (!confirm("Удалить запрос?")) return;
 		try {
 			await api.projects.deleteQuery(projectId, queryId);
@@ -963,626 +964,624 @@
 						Нет данных о кликах. Клики начнут отображаться после выполнения первых задач.
 					</div>
 				{:else}
-					{#let maxCount = Math.max(...timelineData.map((d: any) => d.count), 1)}
-						<div class="flex items-end gap-0.5 h-48 px-1">
-							{#each timelineData as point, i}
-								<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
-									<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
-										{new Date(point.date).toLocaleDateString('ru-RU')}: {point.count} кликов
-									</div>
-									<div class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors" style="height: calc({point.count} / {maxCount} * 100%)"></div>
+					<div class="flex items-end gap-0.5 h-48 px-1">
+						{#each timelineData as point, i}
+							<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
+								<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
+									{new Date(point.date).toLocaleDateString("ru-RU")}: {point.count} кликов
 								</div>
-							{/each}
-						</div>
-					{/let}
-				{/if}
-			</div>
-
-			<!-- Position tracking -->
-			{#if positionSummary && positionSummary.total_records > 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
-					<h3 class="font-medium text-gray-900 mb-4">Позиции</h3>
-					<div class="flex gap-4 mb-4">
-						<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
-							<span class="text-xs text-green-700">Лучшая:</span>
-							<span class="text-sm font-bold text-green-900 ml-1">#{positionSummary.best_position}</span>
-						</div>
-						<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
-							<span class="text-xs text-blue-700">Средняя:</span>
-							<span class="text-sm font-bold text-blue-900 ml-1">{positionSummary.avg_position}</span>
-						</div>
-					</div>
-				</div>
-
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Дата</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each trackingData.slice(-50).reverse() as point}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-mono font-bold {point.position <= 3 ? 'text-green-600' : point.position <= 10 ? 'text-blue-600' : 'text-gray-500'}">
-											#{point.position}
-										</td>
-										<td class="px-4 py-3 text-gray-500">{point.date ? new Date(point.date).toLocaleDateString('ru-RU') : '—'}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{/if}
-
-			{:else if analyticsSummary === null && timelineData.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
-					Нет данных аналитики. Данные появятся после выполнения первых задач очереди.
-				</div>
-
-		{:else if activeTab === 'stats'}
-			<!-- Stats tab: per-query statistics -->
-			<div class="mb-4">
-				<p class="text-sm text-gray-500">Статистика по каждому запросу: частота, средняя позиция, завершённые задачи.</p>
-			</div>
-
-			{#if requestTableData.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет статистики. Данные появятся после завершения первых задач очереди.</div>
-			{:else}
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Запрос</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Частота</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Кликов/день</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Ср. позиция</th>
-									<th class="px-4 py-3 text-right font-medium text-gray-600">Всего задач</th>
-									<th class="px-4 py-3 text-right font-medium text-gray-600">Завершено</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each requestTableData as row}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-medium text-gray-900 max-w-[300px] truncate" title={row.text}>{row.text}</td>
-										<td class="px-4 py-3 text-gray-700">{row.frequency ?? '—'}</td>
-										<td class="px-4 py-3 text-gray-700">{row.daily_clicks ?? '—'}</td>
-										<td class="px-4 py-3">
-											{#if row.avg_position != null}
-												<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-													row.avg_position <= 3 ? 'bg-green-100 text-green-800' :
-													row.avg_position <= 10 ? 'bg-blue-100 text-blue-800' :
-													'bg-yellow-100 text-yellow-800'
-												}`}>#{row.avg_position}</span>
-											{:else}
-												<span class="text-gray-400">—</span>
-											{/if}
-										</td>
-										<td class="px-4 py-3 text-right text-gray-700">{row.total_tasks.toLocaleString()}</td>
-										<td class="px-4 py-3 text-right">
-											<span class="font-medium {row.completed_count > 0 ? 'text-green-600' : 'text-gray-400'}">
-												{row.completed_count.toLocaleString()}
-											</span>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{/if}
-
-		{:else if activeTab === 'positions'}
-			<!-- Positions tab -->
-			<div class="mb-4 flex items-center justify-between">
-				<div>
-					<p class="text-sm text-gray-500">История позиций по запросам. Обновление каждые 10 секунд.</p>
-				</div>
-				{#if trendLines.length > 0 && positionsData.length > 0}
-					<div class="flex gap-2">
-						<button onclick={() => { showChart = true; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>График</button>
-						<button onclick={() => { showChart = false; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${!showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>Таблица</button>
-					</div>
-				{/if}
-			</div>
-
-			{#if trendLines.length === 0 && positionsData.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет данных о позициях. Позиции появятся после завершения первых задач.</div>
-			{:else if showChart && trendLines.length > 0}
-				<!-- SVG Position Trend Chart -->
-				<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-					<svg viewBox="0 0 {getChartDims().containerW} {getChartDims().containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
-						{#const dims = getChartDims()}
-						<!-- Grid lines (horizontal) -->
-						{#for (let i = 1; i <= Math.min(10, Math.floor(dims.innerH / 30)); i++)}
-							<line x1={dims.marginL} y1={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} x2={dims.marginL + dims.innerW} y2={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} stroke="#f1f5f9" stroke-width="1" />
-						{/for}
-
-						<!-- Axis labels -->
-						<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...trendLines[0].data.map((d: any) => d.position)) || 1)}</text>
-						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
-
-						<!-- X-axis date labels -->
-						{#if trendLines[0]?.data?.length > 0}
-							{#for (let i = 0; i < trendLines[0].data.length; i += Math.max(1, Math.floor(trendLines[0].data.length / 6)))}
-								<text x={dims.marginL + (i / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(trendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
-							{/for}
-						{/if}
-
-						<!-- Trend lines -->
-						{#each trendLines as line}
-							<text x={dims.marginL - 8} y={dims.marginT + 4 + trendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
-						{/each}
-
-						<!-- Paths -->
-						<path d="{buildChartPath(trendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
-
-						<!-- Hover line and tooltip -->
-						{#if hoverDate && trendLines[0]?.data?.length > 0}
-							{#const hoverIdx = trendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
-							{#if hoverIdx >= 0}
-								<line x1={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
-							{/if}
-						{/if}
-					{/const}
-					</svg>
-
-					<!-- Legend -->
-					<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
-						{#each trendLines as line}
-							<button onclick={() => { chartHoverQuery = chartHoverQuery === line.text ? null : line.text; }} class="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity" onmouseleave={() => { chartHoverQuery = null; }}>
-								<span class="w-2 h-2 rounded-full bg-blue-500"></span>
-								<span class="text-gray-600 truncate max-w-[120px]">{line.text}</span>
-							</button>
+								<div class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors" style="height: calc({point.count} / {maxTimelineCount} * 100%)"></div>
+							</div>
 						{/each}
 					</div>
+			</div>
+			</div>
+		</div>
+		<!-- Position tracking -->
+		{#if positionSummary && positionSummary.total_records > 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+				<h3 class="font-medium text-gray-900 mb-4">Позиции</h3>
+				<div class="flex gap-4 mb-4">
+					<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+						<span class="text-xs text-green-700">Лучшая:</span>
+						<span class="text-sm font-bold text-green-900 ml-1">#{positionSummary.best_position}</span>
+					</div>
+					<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+						<span class="text-xs text-blue-700">Средняя:</span>
+						<span class="text-sm font-bold text-blue-900 ml-1">{positionSummary.avg_position}</span>
+					</div>
+				</div>
+			</div>
 
-					{#if hoverDate && trendLines.length > 0}
-						<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
-							<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
-							{#each trendLines as line}
-								{#const d = line.data.find((p: any) => p.date === hoverDate)}
-								{#if d}
-									<div class="flex justify-between gap-4">
-										<span class="text-gray-500 truncate">{line.text}</span>
-										<span class="font-mono font-medium text-blue-600">#{d.position}</span>
-									</div>
-								{/if}
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Дата</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each trackingData.slice(-50).reverse() as point}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-mono font-bold {point.position <= 3 ? 'text-green-600' : point.position <= 10 ? 'text-blue-600' : 'text-gray-500'}">
+										#{point.position}
+									</td>
+									<td class="px-4 py-3 text-gray-500">{point.date ? new Date(point.date).toLocaleDateString('ru-RU') : '—'}</td>
+								</tr>
 							{/each}
-						</div>
-					{/if}
+						</tbody>
+					</table>
 				</div>
+			</div>
+		{/if}
 
-			{:else if !showChart && positionsData.length > 0}
-				<!-- Table view -->
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Запрос</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each positionsData as pos}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-medium text-gray-900">{pos.text}</td>
-										<td class="px-4 py-3">
+		{:else if analyticsSummary === null && timelineData.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
+				Нет данных аналитики. Данные появятся после выполнения первых задач очереди.
+			</div>
+
+	{:else if activeTab === 'stats'}
+		<!-- Stats tab: per-query statistics -->
+		<div class="mb-4">
+			<p class="text-sm text-gray-500">Статистика по каждому запросу: частота, средняя позиция, завершённые задачи.</p>
+		</div>
+
+		{#if requestTableData.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет статистики. Данные появятся после завершения первых задач очереди.</div>
+		{:else}
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Запрос</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Частота</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Кликов/день</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Ср. позиция</th>
+								<th class="px-4 py-3 text-right font-medium text-gray-600">Всего задач</th>
+								<th class="px-4 py-3 text-right font-medium text-gray-600">Завершено</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each requestTableData as row}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-medium text-gray-900 max-w-[300px] truncate" title={row.text}>{row.text}</td>
+									<td class="px-4 py-3 text-gray-700">{row.frequency ?? '—'}</td>
+									<td class="px-4 py-3 text-gray-700">{row.daily_clicks ?? '—'}</td>
+									<td class="px-4 py-3">
+										{#if row.avg_position != null}
 											<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-												pos.position <= 3 ? 'bg-green-100 text-green-800' :
-												pos.position <= 10 ? 'bg-blue-100 text-blue-800' :
-												'bg-gray-100 text-gray-800'
-											}`}>#{pos.position}</span>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{/if}
-
-			{:else if activeTab === 'delegates'}
-			<!-- Delegates tab -->
-			<div class="mb-4">
-				<p class="text-sm text-gray-500">Управление доступом к проекту для других пользователей.</p>
-			</div>
-
-			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
-				<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить делегата</h3>
-				<div class="flex flex-wrap gap-2 items-end">
-					<div>
-						<label class="block text-xs text-gray-500 mb-1">ID пользователя</label>
-						<input type="text" bind:value={newDelegateUserId} placeholder="uuid" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none w-72" />
-					</div>
-					<div>
-						<label class="block text-xs text-gray-500 mb-1">Роль</label>
-						<select bind:value={newDelegateRole} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
-							<option value="view">Только просмотр</option>
-							<option value="edit">Просмотр и редактирование</option>
-						</select>
-					</div>
-					<button onclick={addDelegate} class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
-				</div>
-			</div>
-
-			{#if delegates.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет делегатов. Добавьте пользователей для совместного доступа к проекту.</div>
-			{:else}
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">UserID</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Роль</th>
-									<th class="px-4 py-3 text-right font-medium text-gray-600">Действия</th>
+												row.avg_position <= 3 ? 'bg-green-100 text-green-800' :
+												row.avg_position <= 10 ? 'bg-blue-100 text-blue-800' :
+												'bg-yellow-100 text-yellow-800'
+											}`}>#{row.avg_position}</span>
+										{:else}
+											<span class="text-gray-400">—</span>
+										{/if}
+									</td>
+									<td class="px-4 py-3 text-right text-gray-700">{row.total_tasks.toLocaleString()}</td>
+									<td class="px-4 py-3 text-right">
+										<span class="font-medium {row.completed_count > 0 ? 'text-green-600' : 'text-gray-400'}">
+											{row.completed_count.toLocaleString()}
+										</span>
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each delegates as d}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-mono text-xs text-gray-700">{d.delegate_user_id}</td>
-										<td class="px-4 py-3">
-											<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-												d.role === 'edit' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-											}`}>{d.role === 'edit' ? 'Редактирование' : 'Только просмотр'}</span>
-										</td>
-										<td class="px-4 py-3 text-right">
-											<button onclick={() => removeDelegate(d.delegate_user_id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{/if}
-
-		{:else if activeTab === 'markers'}
-			<!-- Markers tab -->
-			<div class="mb-4">
-				<p class="text-sm text-gray-500">Визуальные маркеры для отслеживания страниц сайта</p>
-			</div>
-
-			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
-				<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить маркер</h3>
-				<div class="flex flex-wrap gap-2">
-					<input type="text" bind:value={newMarkerName} placeholder="Название" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[150px]" />
-					<input type="url" bind:value={newMarkerUrl} placeholder="URL страницы" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[200px]" />
-					<input type="text" bind:value={newMarkerSelector} placeholder="CSS селектор (опционально)" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[200px]" />
-					<button onclick={addMarker} class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			</div>
+		{/if}
 
-			{#if markersData.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет маркеров. Добавьте первый маркер для начала работы.</div>
-			{:else}
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Название</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">URL</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">CSS селектор</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Статус</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Действия</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each markersData as marker}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-medium text-gray-900">{marker.name}</td>
-										<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={marker.url} target="_blank" class="hover:underline">{marker.url}</a></td>
-										<td class="px-4 py-3 text-gray-600 font-mono text-xs">{marker.css_selector || '—'}</td>
-										<td class="px-4 py-3">
-											<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${marker.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-												{marker.is_active ? 'Активен' : 'Неактивен'}
-											</span>
-										</td>
-										<td class="px-4 py-3">
-											<button onclick={() => deleteMarker(marker.id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{/if}
-
-		{:else if activeTab === 'webmaster'}
-			<!-- Webmaster tab -->
-			<div class="mb-4">
-				<p class="text-sm text-gray-500">Верификация домена через Яндекс.Вебмастер, Google Search Console и другие сервисы</p>
+	{:else if activeTab === 'positions'}
+		<!-- Positions tab -->
+		<div class="mb-4 flex items-center justify-between">
+			<div>
+				<p class="text-sm text-gray-500">История позиций по запросам. Обновление каждые 10 секунд.</p>
 			</div>
-
-			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
-				<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить сервис верификации</h3>
+			{#if trendLines.length > 0 && positionsData.length > 0}
 				<div class="flex gap-2">
-					<button onclick={() => addWebmarker('yandex')} class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm font-medium transition-colors">Яндекс.Вебмастер</button>
-					<button onclick={() => addWebmarker('google')} class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">Google Search Console</button>
-				</div>
-			</div>
-
-			{#if webmarkersData.length === 0}
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет подключённых сервисов. Добавьте первый для верификации домена.</div>
-			{:else}
-				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead class="bg-gray-50 border-b border-gray-200">
-								<tr>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Платформа</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Код верификации</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Статус</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Последняя синхронизация</th>
-									<th class="px-4 py-3 text-left font-medium text-gray-600">Действия</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each webmarkersData as wm}
-									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-										<td class="px-4 py-3 font-medium text-gray-900 capitalize">{wm.platform}</td>
-										<td class="px-4 py-3 font-mono text-xs">{wm.verification_code || '—'}</td>
-										<td class="px-4 py-3">
-											<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${wm.is_verified ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-												{wm.is_verified ? 'Верифицирован' : 'Ожидает'}
-											</span>
-										</td>
-										<td class="px-4 py-3 text-gray-500 text-xs">{wm.last_sync ? new Date(wm.last_sync).toLocaleString('ru-RU') : '—'}</td>
-										<td class="px-4 py-3 flex gap-2">
-											{#if !wm.is_verified}
-												<button onclick={() => verifyWebmarker(wm.id)} class="text-green-500 hover:text-green-700 text-xs">Верифицировать</button>
-											{/if}
-											<button onclick={() => deleteWebmarker(wm.id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+					<button onclick={() => { showChart = true; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>График</button>
+					<button onclick={() => { showChart = false; }} class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${!showChart ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>Таблица</button>
 				</div>
 			{/if}
+		</div>
 
-			{:else if activeTab === 'settings'}
-				<!-- Settings tab: integrations, schedule window, query modifications -->
-				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-					<h3 class="text-lg font-semibold text-gray-900 mb-4">Настройки проекта</h3>
+		{#if trendLines.length === 0 && positionsData.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет данных о позициях. Позиции появятся после завершения первых задач.</div>
+		{:else if showChart && trendLines.length > 0}
+			<!-- SVG Position Trend Chart -->
+			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+				<svg viewBox="0 0 {getChartDims().containerW} {getChartDims().containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
+					{#const dims = getChartDims()}
+					<!-- Grid lines (horizontal) -->
+					{#for (let i = 1; i <= Math.min(10, Math.floor(dims.innerH / 30)); i++)}
+						<line x1={dims.marginL} y1={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} x2={dims.marginL + dims.innerW} y2={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} stroke="#f1f5f9" stroke-width="1" />
+					{/for}
 
-					{#if settingsSaved}
-						<div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">Настройки сохранены</div>
+					<!-- Axis labels -->
+					<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...trendLines[0].data.map((d: any) => d.position)) || 1)}</text>
+					<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
+
+					<!-- X-axis date labels -->
+					{#if trendLines[0]?.data?.length > 0}
+						{#for (let i = 0; i < trendLines[0].data.length; i += Math.max(1, Math.floor(trendLines[0].data.length / 6)))}
+							<text x={dims.marginL + (i / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(trendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
+						{/for}
 					{/if}
 
-					<!-- Integration selector -->
-					<div class="mb-6">
-						<label class="block text-sm font-medium text-gray-700 mb-1">Интеграция</label>
-						<select bind:value={settingIntegration} class="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-							<option value="default">Default (без интеграции)</option>
-							<option value="integration_2">Integration 2</option>
-							<option value="integration_1_testing">Integration 1 (testing)</option>
-							<option value="main_bay_belarus">Main Bay Belarus</option>
-						</select>
-					</div>
+					<!-- Trend lines -->
+					{#each trendLines as line}
+						<text x={dims.marginL - 8} y={dims.marginT + 4 + trendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
+					{/each}
 
-					<!-- Schedule window -->
-					<div class="mb-6">
-						<label class="block text-sm font-medium text-gray-700 mb-2">Окно расписания</label>
-						<div class="grid grid-cols-2 gap-3 max-w-sm">
-							<div>
-								<label class="block text-xs text-gray-500 mb-1">Начало</label>
-								<input type="time" bind:value={settingScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-							</div>
-							<div>
-								<label class="block text-xs text-gray-500 mb-1">Окончание</label>
-								<input type="time" bind:value={settingScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-							</div>
-						</div>
-					</div>
+					<!-- Paths -->
+					<path d="{buildChartPath(trendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
 
-					<!-- Query modifications -->
-					<div class="mb-6">
-						<label class="block text-sm font-medium text-gray-700 mb-2">Модификации запросов</label>
-						<div class="space-y-2 max-w-md">
-							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-								<input type="checkbox" bind:checked={settingModsCapital} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-								Каждый с заглавной буквы
-							</label>
-							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-								<input type="checkbox" bind:checked={settingModsRandomCaps} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-								Случайные регистр букв (random-caps)
-							</label>
-							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-								<input type="checkbox" bind:checked={settingModsTypos} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-								Ввод опечаток (typos)
-							</label>
-							<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-								<input type="checkbox" bind:checked={settingModsTrailingSpace} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-								Trailing space (пробел в конце)
-							</label>
-						</div>
-					</div>
+					<!-- Hover line and tooltip -->
+					{#if hoverDate && trendLines[0]?.data?.length > 0}
+						{#const hoverIdx = trendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
+						{#if hoverIdx >= 0}
+							<line x1={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
+						{/if}
+					{/if}
+				
+				</svg>
 
-					<button onclick={saveProjectSettings} disabled={settingsSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
-						{settingsSaving ? 'Сохранение…' : 'Сохранить настройки'}
-					</button>
+				<!-- Legend -->
+				<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+					{#each trendLines as line}
+						<button onclick={() => { chartHoverQuery = chartHoverQuery === line.text ? null : line.text; }} class="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity" onmouseleave={() => { chartHoverQuery = null; }}>
+							<span class="w-2 h-2 rounded-full bg-blue-500"></span>
+							<span class="text-gray-600 truncate max-w-[120px]">{line.text}</span>
+						</button>
+					{/each}
 				</div>
 
-			{/if}
-	{/if}
+				{#if hoverDate && trendLines.length > 0}
+					<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+						<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
+						{#each trendLines as line}
+							{#const d = line.data.find((p: any) => p.date === hoverDate)}
+							{#if d}
+								<div class="flex justify-between gap-4">
+									<span class="text-gray-500 truncate">{line.text}</span>
+									<span class="font-mono font-medium text-blue-600">#{d.position}</span>
+								</div>
+							{/if}
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+		{:else if !showChart && positionsData.length > 0}
+			<!-- Table view -->
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Запрос</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each positionsData as pos}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-medium text-gray-900">{pos.text}</td>
+									<td class="px-4 py-3">
+										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+											pos.position <= 3 ? 'bg-green-100 text-green-800' :
+											pos.position <= 10 ? 'bg-blue-100 text-blue-800' :
+											'bg-gray-100 text-gray-800'
+										}`}>#{pos.position}</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+		{:else if activeTab === 'delegates'}
+		<!-- Delegates tab -->
+		<div class="mb-4">
+			<p class="text-sm text-gray-500">Управление доступом к проекту для других пользователей.</p>
+		</div>
+
+		<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
+			<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить делегата</h3>
+			<div class="flex flex-wrap gap-2 items-end">
+				<div>
+					<label class="block text-xs text-gray-500 mb-1">ID пользователя</label>
+					<input type="text" bind:value={newDelegateUserId} placeholder="uuid" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none w-72" />
+				</div>
+				<div>
+					<label class="block text-xs text-gray-500 mb-1">Роль</label>
+					<select bind:value={newDelegateRole} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+						<option value="view">Только просмотр</option>
+						<option value="edit">Просмотр и редактирование</option>
+					</select>
+				</div>
+				<button onclick={addDelegate} class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
+			</div>
+		</div>
+
+		{#if delegates.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет делегатов. Добавьте пользователей для совместного доступа к проекту.</div>
+		{:else}
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">UserID</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Роль</th>
+								<th class="px-4 py-3 text-right font-medium text-gray-600">Действия</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each delegates as d}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-mono text-xs text-gray-700">{d.delegate_user_id}</td>
+									<td class="px-4 py-3">
+										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+											d.role === 'edit' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+										}`}>{d.role === 'edit' ? 'Редактирование' : 'Только просмотр'}</span>
+									</td>
+									<td class="px-4 py-3 text-right">
+										<button onclick={() => removeDelegate(d.delegate_user_id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+	{:else if activeTab === 'markers'}
+		<!-- Markers tab -->
+		<div class="mb-4">
+			<p class="text-sm text-gray-500">Визуальные маркеры для отслеживания страниц сайта</p>
+		</div>
+
+		<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
+			<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить маркер</h3>
+			<div class="flex flex-wrap gap-2">
+				<input type="text" bind:value={newMarkerName} placeholder="Название" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[150px]" />
+				<input type="url" bind:value={newMarkerUrl} placeholder="URL страницы" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[200px]" />
+				<input type="text" bind:value={newMarkerSelector} placeholder="CSS селектор (опционально)" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 min-w-[200px]" />
+				<button onclick={addMarker} class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
+			</div>
+		</div>
+
+		{#if markersData.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет маркеров. Добавьте первый маркер для начала работы.</div>
+		{:else}
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Название</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">URL</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">CSS селектор</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Статус</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Действия</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each markersData as marker}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-medium text-gray-900">{marker.name}</td>
+									<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={marker.url} target="_blank" class="hover:underline">{marker.url}</a></td>
+									<td class="px-4 py-3 text-gray-600 font-mono text-xs">{marker.css_selector || '—'}</td>
+									<td class="px-4 py-3">
+										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${marker.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+											{marker.is_active ? 'Активен' : 'Неактивен'}
+										</span>
+									</td>
+									<td class="px-4 py-3">
+										<button onclick={() => deleteMarker(marker.id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+	{:else if activeTab === 'webmaster'}
+		<!-- Webmaster tab -->
+		<div class="mb-4">
+			<p class="text-sm text-gray-500">Верификация домена через Яндекс.Вебмастер, Google Search Console и другие сервисы</p>
+		</div>
+
+		<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
+			<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить сервис верификации</h3>
+			<div class="flex gap-2">
+				<button onclick={() => addWebmarker('yandex')} class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm font-medium transition-colors">Яндекс.Вебмастер</button>
+				<button onclick={() => addWebmarker('google')} class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">Google Search Console</button>
+			</div>
+		</div>
+
+		{#if webmarkersData.length === 0}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">Нет подключённых сервисов. Добавьте первый для верификации домена.</div>
+		{:else}
+			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Платформа</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Код верификации</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Статус</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Последняя синхронизация</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Действия</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each webmarkersData as wm}
+								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+									<td class="px-4 py-3 font-medium text-gray-900 capitalize">{wm.platform}</td>
+									<td class="px-4 py-3 font-mono text-xs">{wm.verification_code || '—'}</td>
+									<td class="px-4 py-3">
+										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${wm.is_verified ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+											{wm.is_verified ? 'Верифицирован' : 'Ожидает'}
+										</span>
+									</td>
+									<td class="px-4 py-3 text-gray-500 text-xs">{wm.last_sync ? new Date(wm.last_sync).toLocaleString('ru-RU') : '—'}</td>
+									<td class="px-4 py-3 flex gap-2">
+										{#if !wm.is_verified}
+											<button onclick={() => verifyWebmarker(wm.id)} class="text-green-500 hover:text-green-700 text-xs">Верифицировать</button>
+										{/if}
+										<button onclick={() => deleteWebmarker(wm.id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+		{:else if activeTab === 'settings'}
+			<!-- Settings tab: integrations, schedule window, query modifications -->
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+				<h3 class="text-lg font-semibold text-gray-900 mb-4">Настройки проекта</h3>
+
+				{#if settingsSaved}
+					<div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">Настройки сохранены</div>
+				{/if}
+
+				<!-- Integration selector -->
+				<div class="mb-6">
+					<label class="block text-sm font-medium text-gray-700 mb-1">Интеграция</label>
+					<select bind:value={settingIntegration} class="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+						<option value="default">Default (без интеграции)</option>
+						<option value="integration_2">Integration 2</option>
+						<option value="integration_1_testing">Integration 1 (testing)</option>
+						<option value="main_bay_belarus">Main Bay Belarus</option>
+					</select>
+				</div>
+
+				<!-- Schedule window -->
+				<div class="mb-6">
+					<label class="block text-sm font-medium text-gray-700 mb-2">Окно расписания</label>
+					<div class="grid grid-cols-2 gap-3 max-w-sm">
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Начало</label>
+							<input type="time" bind:value={settingScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Окончание</label>
+							<input type="time" bind:value={settingScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+						</div>
+					</div>
+				</div>
+
+				<!-- Query modifications -->
+				<div class="mb-6">
+					<label class="block text-sm font-medium text-gray-700 mb-2">Модификации запросов</label>
+					<div class="space-y-2 max-w-md">
+						<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+							<input type="checkbox" bind:checked={settingModsCapital} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+							Каждый с заглавной буквы
+						</label>
+						<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+							<input type="checkbox" bind:checked={settingModsRandomCaps} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+							Случайные регистр букв (random-caps)
+						</label>
+						<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+							<input type="checkbox" bind:checked={settingModsTypos} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+							Ввод опечаток (typos)
+						</label>
+						<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+							<input type="checkbox" bind:checked={settingModsTrailingSpace} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+							Trailing space (пробел в конце)
+						</label>
+					</div>
+				</div>
+
+				<button onclick={saveProjectSettings} disabled={settingsSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
+					{settingsSaving ? 'Сохранение…' : 'Сохранить настройки'}
+				</button>
+			</div>
+
+		{/if}
+{/if}
 </div>
 
 <!-- Proklik modal -->
 {#if showProklik && project}
-	<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showProklik = false; }}>
-		<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md m-4">
-			<h3 class="text-lg font-semibold text-gray-900 mb-4">Проклик — мгновенные клики</h3>
+<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showProklik = false; }}>
+	<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md m-4">
+		<h3 class="text-lg font-semibold text-gray-900 mb-4">Проклик — мгновенные клики</h3>
 
-			{#if proklikMode === "all"}
-				<p class="text-sm text-gray-600 mb-3">Отправить {proklikCount} проклик(ов) на случайные запросы проекта.</p>
-				<label class="block text-sm font-medium text-gray-700 mb-1">Количество</label>
-				<input type="number" bind:value={proklikCount} min="1" max="1000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
-			{:else}
-				<p class="text-sm text-gray-600 mb-3">Отправить проклики по выбранным запросам ({proklikQueries.length шт.}).</p>
-				<label class="block text-sm font-medium text-gray-700 mb-1">Кликов на каждый запрос</label>
-				<input type="number" bind:value={proklikCount} min="1" max="100" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
-			{/if}
+		{#if proklikMode === "all"}
+			<p class="text-sm text-gray-600 mb-3">Отправить {proklikCount} проклик(ов) на случайные запросы проекта.</p>
+			<label class="block text-sm font-medium text-gray-700 mb-1">Количество</label>
+			<input type="number" bind:value={proklikCount} min="1" max="1000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
+		{:else}
+			<p class="text-sm text-gray-600 mb-3">Отправить проклики по выбранным запросам ({proklikQueries.length шт.}).</p>
+			<label class="block text-sm font-medium text-gray-700 mb-1">Кликов на каждый запрос</label>
+			<input type="number" bind:value={proklikCount} min="1" max="100" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
+		{/if}
 
-			<div class="flex justify-end gap-2 mt-5">
-				<button onclick={() => showProklik = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
-				<button onclick={sendProklik} disabled={proklikLoading} class="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white rounded-lg text-sm font-medium transition-colors">
-					{proklikLoading ? 'Отправка…' : 'Отправить проклик'}
-				</button>
-			</div>
+		<div class="flex justify-end gap-2 mt-5">
+			<button onclick={() => showProklik = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+			<button onclick={sendProklik} disabled={proklikLoading} class="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white rounded-lg text-sm font-medium transition-colors">
+				{proklikLoading ? 'Отправка…' : 'Отправить проклик'}
+			</button>
 		</div>
 	</div>
+</div>
 {/if}
 
 <!-- Boost modal -->
 {#if showBoost && project}
-	<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showBoost = false; }}>
-		<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg m-4">
-			<h3 class="text-lg font-semibold text-gray-900 mb-1">Буст — ускоренный прогон</h3>
-			<p class="text-sm text-gray-500 mb-4">Выбранные: {selectedQueryIds.size} запросов</p>
+<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick={(e) => { if (e.target === e.currentTarget) showBoost = false; }}>
+	<div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg m-4">
+		<h3 class="text-lg font-semibold text-gray-900 mb-1">Буст — ускоренный прогон</h3>
+		<p class="text-sm text-gray-500 mb-4">Выбранные: {selectedQueryIds.size} запросов</p>
 
-			<div class="space-y-3">
-				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Кликов в день на каждый запрос</label>
-					<input type="number" bind:value={boostDailyClicks} min="1" max="10000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
-				</div>
-				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Интервал между кликами (секунды)</label>
-					<input type="number" bind:value={boostInterval} min="60" max="86400" step="60" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
-					<p class="text-xs text-gray-400 mt-1">Минимум 60 секунд. Например, 3600 = 1 клик/час</p>
-				</div>
+		<div class="space-y-3">
+			<div>
+				<label class="block text-sm font-medium text-gray-700 mb-1">Кликов в день на каждый запрос</label>
+				<input type="number" bind:value={boostDailyClicks} min="1" max="10000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+			</div>
+			<div>
+				<label class="block text-sm font-medium text-gray-700 mb-1">Интервал между кликами (секунды)</label>
+				<input type="number" bind:value={boostInterval} min="60" max="86400" step="60" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
+				<p class="text-xs text-gray-400 mt-1">Минимум 60 секунд. Например, 3600 = 1 клик/час</p>
+			</div>
 
-				<!-- Boost schedule window -->
-				<div class="border-t border-gray-200 pt-3 mt-3">
-					<p class="text-sm font-medium text-gray-700 mb-2">Окно расписания буста</p>
-					<div class="grid grid-cols-2 gap-3">
-						<div>
-							<label class="block text-xs text-gray-500 mb-1">Начало</label>
-							<input type="time" bind:value={boostScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
-						</div>
-						<div>
-							<label class="block text-xs text-gray-500 mb-1">Окончание</label>
-							<input type="time" bind:value={boostScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
-						</div>
+			<!-- Boost schedule window -->
+			<div class="border-t border-gray-200 pt-3 mt-3">
+				<p class="text-sm font-medium text-gray-700 mb-2">Окно расписания буста</p>
+				<div class="grid grid-cols-2 gap-3">
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">Начало</label>
+						<input type="time" bind:value={boostScheduleStart} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
 					</div>
-				</div>
-
-				<!-- Day distribution -->
-				<div class="border-t border-gray-200 pt-3">
-					<p class="text-sm font-medium text-gray-700 mb-2">Распределение по дням недели</p>
-					<p class="text-xs text-gray-500 mb-2">Выберите дни для буста (оставьте пустым — каждый день)</p>
-					<div class="flex gap-2 flex-wrap">
-						{#each dayLabels as day}
-							<button onclick={() => boostDayDist[day.key] = !boostDayDist[day.key]} class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${boostDayDist[day.key] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-								{day.label}
-							</button>
-						{/each}
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">Окончание</label>
+						<input type="time" bind:value={boostScheduleEnd} class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none" />
 					</div>
-				</div>
-
-				<div class="flex items-center gap-2">
-					<input type="checkbox" bind:checked={boostStartFromNow} id="boost_now" class="rounded border-gray-300 text-orange-600 focus:ring-orange-500" />
-					<label for="boost_now" class="text-sm text-gray-700">Начать расписание с сейчас, иначе — с завтра</label>
 				</div>
 			</div>
 
-			<div class="flex justify-end gap-2 mt-5">
-				<button onclick={() => showBoost = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
-				<button onclick={sendBoost} disabled={boostLoading || selectedQueryIds.size === 0} class="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors">
-					{boostLoading ? 'Буст...' : `Запустить буст (${selectedQueryIds.size} запросов)`}
-				</button>
+			<!-- Day distribution -->
+			<div class="border-t border-gray-200 pt-3">
+				<p class="text-sm font-medium text-gray-700 mb-2">Распределение по дням недели</p>
+				<p class="text-xs text-gray-500 mb-2">Выберите дни для буста (оставьте пустым — каждый день)</p>
+				<div class="flex gap-2 flex-wrap">
+					{#each dayLabels as day}
+						<button onclick={() => boostDayDist[day.key] = !boostDayDist[day.key]} class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${boostDayDist[day.key] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+							{day.label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<div class="flex items-center gap-2">
+				<input type="checkbox" bind:checked={boostStartFromNow} id="boost_now" class="rounded border-gray-300 text-orange-600 focus:ring-orange-500" />
+				<label for="boost_now" class="text-sm text-gray-700">Начать расписание с сейчас, иначе — с завтра</label>
 			</div>
 		</div>
+
+		<div class="flex justify-end gap-2 mt-5">
+			<button onclick={() => showBoost = false} class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+			<button onclick={sendBoost} disabled={boostLoading || selectedQueryIds.size === 0} class="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors">
+				{boostLoading ? 'Буст...' : `Запустить буст (${selectedQueryIds.size} запросов)`}
+			</button>
+		</div>
 	</div>
+</div>
 {/if}
 
 
 <!-- Daily drill-down modal -->
 {#if showDrillDown}
 <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) showDrillDown = false; }}>
-	<div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
-		<div class="flex items-center justify-between p-4 border-b border-gray-200">
-			<h3 class="text-lg font-semibold text-gray-900">&#1040;&#1083;&#1086;&#1090;&#1077;&#1083;&#1103; &#1087;&#1088;&#1080; {drillDate}</h3>
-			<button onclick={() => showDrillDown = false} class="text-gray-400 hover:text-gray-600">&times;</button>
-		</div>
-		<div class="p-4 overflow-y-auto max-h-[calc(90vh-80px)]">
-			{#if drillLoading}
-				<p class="text-sm text-gray-500 text-center py-8">&#1053;&#1072; &#1085;&#1072;&#1089;&#1097;&#1072;&#1085;&#1080;&#1077;...</p>
-			{:else}
-				<p class="text-sm text-gray-600 mb-3">&#1053;&#1086;&#1075;&#1084;&#1072; &#1085;&#1090;&#1086;&#1074;&#1086;&#1084;: <strong>{drillClicks.length}</strong></p>
-				{#if drillClicks.length === 0}
-					<p class="text-sm text-gray-500 text-center py-4">&#1057;&#1072;&#1079;&#1084;&#1086;&#1090;&#1090;&#1072; &#1074;&#1085;&#1077;&#1078;&#1085;&#1077;&#1075;&#1086;</p>
-				{:else}
-					<div class="space-y-2">
-						{#each drillClicks as click}
-							<div class="border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors cursor-pointer" onclick={() => openTaskDetail(click.id)}>
-								<div class="flex items-start justify-between gap-3">
-									<div class="min-w-0 flex-1">
-										<p class="text-sm text-gray-900 truncate">{click.url}</p>
-										<div class="flex items-center gap-2 mt-1">
-											<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700">{statusLabels[click.source] || click.source}</span>
-											<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {click.status === &#x27;completed&#x27; ? &#x27;bg-green-50 text-green-700&#x27; : click.status === &#x27;not_found&#x27; ? &#x27;bg-red-50 text-red-700&#x27; : &#x27;bg-yellow-50 text-yellow-700&#x27;}">{statusLabels[click.status] || click.status}</span>
-											{#if click.position}
-												<span class="text-xs text-gray-500">&#1055;&#1086;&#1076;: {click.position}</span>
-												{/if}
-										</div>
-									</div>
-									<span class="text-xs text-gray-400 whitespace-nowrap">{click.created_at ? new Date(click.created_at).toLocaleTimeString(&#x27;ru-RU&#x27;) : &#x27;&#x27;}</span>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			{/if}
-		</div>
+<div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
+	<div class="flex items-center justify-between p-4 border-b border-gray-200">
+		<h3 class="text-lg font-semibold text-gray-900">&#1040;&#1083;&#1086;&#1090;&#1077;&#1083;&#1103; &#1087;&#1088;&#1080; {drillDate}</h3>
+		<button onclick={() => showDrillDown = false} class="text-gray-400 hover:text-gray-600">&times;</button>
 	</div>
+	<div class="p-4 overflow-y-auto max-h-[calc(90vh-80px)]">
+		{#if drillLoading}
+			<p class="text-sm text-gray-500 text-center py-8">&#1053;&#1072; &#1085;&#1072;&#1089;&#1097;&#1072;&#1085;&#1080;&#1077;...</p>
+		{:else}
+			<p class="text-sm text-gray-600 mb-3">&#1053;&#1086;&#1075;&#1084;&#1072; &#1085;&#1090;&#1086;&#1074;&#1086;&#1084;: <strong>{drillClicks.length}</strong></p>
+			{#if drillClicks.length === 0}
+				<p class="text-sm text-gray-500 text-center py-4">&#1057;&#1072;&#1079;&#1084;&#1086;&#1090;&#1090;&#1072; &#1074;&#1085;&#1077;&#1078;&#1085;&#1077;&#1075;&#1086;</p>
+			{:else}
+				<div class="space-y-2">
+					{#each drillClicks as click}
+						<div class="border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors cursor-pointer" onclick={() => openTaskDetail(click.id)}>
+							<div class="flex items-start justify-between gap-3">
+								<div class="min-w-0 flex-1">
+									<p class="text-sm text-gray-900 truncate">{click.url}</p>
+									<div class="flex items-center gap-2 mt-1">
+										<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700">{statusLabels[click.source] || click.source}</span>
+										<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {click.status === &#x27;completed&#x27; ? &#x27;bg-green-50 text-green-700&#x27; : click.status === &#x27;not_found&#x27; ? &#x27;bg-red-50 text-red-700&#x27; : &#x27;bg-yellow-50 text-yellow-700&#x27;}">{statusLabels[click.status] || click.status}</span>
+										{#if click.position}
+											<span class="text-xs text-gray-500">&#1055;&#1086;&#1076;: {click.position}</span>
+											{/if}
+									</div>
+								</div>
+								<span class="text-xs text-gray-400 whitespace-nowrap">{click.created_at ? new Date(click.created_at).toLocaleTimeString(&#x27;ru-RU&#x27;) : &#x27;&#x27;}</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+	</div>
+</div>
 </div>
 {/if}
 <!-- Bulk Edit Modal -->
 {#if showBulkEdit}
 <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) showBulkEdit = false; }}>
-	<div class="bg-white rounded-xl shadow-2xl max-w-lg w-full m-4 max-h-[90vh] overflow-y-auto">
-		<div class="flex items-center justify-between p-4 border-b border-gray-200">
-			<h3 class="text-lg font-semibold text-gray-900">Массовое редактирование ({selectedQueryIds.size})</h3>
-			<button onclick={() => showBulkEdit = false} class="text-gray-400 hover:text-gray-600">&times;</button>
+<div class="bg-white rounded-xl shadow-2xl max-w-lg w-full m-4 max-h-[90vh] overflow-y-auto">
+	<div class="flex items-center justify-between p-4 border-b border-gray-200">
+		<h3 class="text-lg font-semibold text-gray-900">Массовое редактирование ({selectedQueryIds.size})</h3>
+		<button onclick={() => showBulkEdit = false} class="text-gray-400 hover:text-gray-600">&times;</button>
+	</div>
+	<div class="p-4 space-y-4">
+		<div>
+			<label class="block text-sm font-medium text-gray-700 mb-1">Кликов/день (новое значение)</label>
+			<input type="number" bind:value={bulkEditDailyClicks} min="0" placeholder="Не менять" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+			<p class="text-xs text-gray-400 mt-1">Установите значение для изменения daily_clicks у выбранных запросов</p>
 		</div>
-		<div class="p-4 space-y-4">
-			<div>
-				<label class="block text-sm font-medium text-gray-700 mb-1">Кликов/день (новое значение)</label>
-				<input type="number" bind:value={bulkEditDailyClicks} min="0" placeholder="Не менять" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-				<p class="text-xs text-gray-400 mt-1">Установите значение для изменения daily_clicks у выбранных запросов</p>
-			</div>
-			<div>
-				<label class="block text-sm font-medium text-gray-700 mb-1">Гео (JSON, опционально)</label>
-				<textarea bind:value={bulkEditGeoJson} rows="3" placeholder='{"country": "ru"}' class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
-				<p class="text-xs text-gray-400 mt-1">Заменит geo у выбранных запросов (должен быть валидным JSON)</p>
-			</div>
-			<div>
-				<label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-					<input type="checkbox" bind:checked={bulkEditApplyClickUrlToggle} class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
-					Установить click_url для выбранных запросов
-				</label>
-				{#if bulkEditApplyClickUrlToggle}
-					<input type="url" bind:value={bulkEditApplyClickUrl} placeholder="https://example.com/click" class="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-				{/if}
-			</div>
-			<div class="flex gap-2 pt-2">
-				<button onclick={() => showBulkEdit = false} class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
-				<button onclick={bulkUpdate} disabled={bulkLoading} class="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-lg text-sm font-medium transition-colors">
-					{bulkLoading ? 'Обновление...' : 'Обновить'}
-				</button>
-			</div>
+		<div>
+			<label class="block text-sm font-medium text-gray-700 mb-1">Гео (JSON, опционально)</label>
+			<textarea bind:value={bulkEditGeoJson} rows="3" placeholder='{"country": "ru"}' class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
+			<p class="text-xs text-gray-400 mt-1">Заменит geo у выбранных запросов (должен быть валидным JSON)</p>
+		</div>
+		<div>
+			<label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+				<input type="checkbox" bind:checked={bulkEditApplyClickUrlToggle} class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+				Установить click_url для выбранных запросов
+			</label>
+			{#if bulkEditApplyClickUrlToggle}
+				<input type="url" bind:value={bulkEditApplyClickUrl} placeholder="https://example.com/click" class="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+			{/if}
+		</div>
+		<div class="flex gap-2 pt-2">
+			<button onclick={() => showBulkEdit = false} class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+			<button onclick={bulkUpdate} disabled={bulkLoading} class="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-lg text-sm font-medium transition-colors">
+				{bulkLoading ? 'Обновление...' : 'Обновить'}
+			</button>
 		</div>
 	</div>
+</div>
 </div>
 {/if}

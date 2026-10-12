@@ -64,7 +64,20 @@
 
 	// Modals
 	let showCreateModal = $state(false);
-	$: if (showCreateModal) { multigeoRegions = []; showMultigeoBuilder = false; }
+	// Reset multigeo when create modal opens
+	$effect(() => {
+		if (showCreateModal) {
+			multigeoRegions = [];
+			showMultigeoBuilder = false;
+		}
+	});
+
+	// Sync select-all checkbox state
+	$effect(() => {
+		selectAllChecked = selectedProjectIds.length === projects.length && projects.length > 0;
+	});
+
+	let selectAllChecked = $state(false);
 	let showGroupModal = $state(false);
 	let editingGroup = $state<ProjectGroup | null>(null);
 	let createFormName = $state("");
@@ -386,7 +399,7 @@
 			// Load geo settings for multigeo builder
 			if (full.geo_settings && full.geo_settings.type === "multigeo") {
 				const percents = full.geo_settings.percents || {};
-				multigeoRegions = Object.entries(percents).map(([region, percentage]) => ({ region, percentage }));
+				multigeoRegions = Object.entries(percents).map(([region, percentage]) => ({ region, percentage: Number(percentage) || 0 }));
 			} else {
 				multigeoRegions = [];
 			}
@@ -616,16 +629,15 @@
 					<thead class="bg-gray-50 border-b border-gray-200">
 						<tr>
 							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10">
-							<input type="checkbox" checked={selectedProjectIds.length === projects.length && projects.length > 0} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-								onchange={(e) => {
-									const checked = (e.target as HTMLInputElement).checked;
-									if (checked) {
-										selectedProjectIds = projects.map(p => p.id);
-									} else {
-										selectedProjectIds = [];
-									}
-									showBulkToolbar = selectedProjectIds.length > 0;
-							}}} />
+							<input type="checkbox" bind:checked={selectAllChecked} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+								oninput={() => {
+									if (selectAllChecked) {
+									selectedProjectIds = projects.map(p => p.id);
+								} else {
+									selectedProjectIds = [];
+								}
+								showBulkToolbar = selectedProjectIds.length > 0;
+							}} />
 							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10"></th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Название</th>
 							{#if showRegionCol}
@@ -657,17 +669,11 @@
 								<!-- Selection checkbox -->
 								<td class="px-4 py-3">
 									<label class="inline-flex cursor-pointer">
-							<input type="checkbox" checked={selectedProjectIds.includes(project.id)} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-										onchange={(e) => {
-											const checked = (e.target as HTMLInputElement).checked;
-											if (checked) {
-												selectedProjectIds = [...selectedProjectIds, project.id];
-											} else {
-												selectedProjectIds = selectedProjectIds.filter(id => id !== project.id);
-											}
+									<input type="checkbox" checked={selectedProjectIds.includes(project.id)} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+										oninput={() => {
+											selectedProjectIds = selectedProjectIds.includes(project.id) ? [...selectedProjectIds, project.id] : selectedProjectIds.filter(id => id !== project.id);
 											showBulkToolbar = selectedProjectIds.length > 0;
-							}}} />
-									</label>
+										}} />
 								</td>
 								<!-- Active toggle -->
 								<td class="px-4 py-3">
@@ -730,7 +736,7 @@
 											<a href="/projects/{project.id}" class="text-blue-600 hover:text-blue-700 text-xs">Открыть</a>
 											<button onclick={() => copyProject(project.id)} class="text-gray-500 hover:text-gray-700 text-xs">Копировать</button>
 											<button onclick={() => deleteProject(project.id)} class="text-red-500 hover:text-red-700 text-xs">Удалить</button>
-											<button onclick={showContextMenu} class="text-gray-400 hover:text-gray-600 text-xs">⋮</button>
+											<button onclick={(e) => showContextMenu(e, project.id)} class="text-gray-400 hover:text-gray-600 text-xs">⋮</button>
 										</div>
 									</td>
 								{/if}
@@ -802,15 +808,16 @@
 
 	<!-- Context menu -->
 	{#if contextMenu}
-		<div class="fixed z-50" style="left: {contextMenu.x}px; top: {contextMenu.y}px">
+		{@const cm = contextMenu}
+		<div class="fixed z-50" style="left: {cm.x}px; top: {cm.y}px">
 			<div class="bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-56">
-				<a href="/projects/{contextMenu.projectId}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Открыть</a>
-				<button onclick={() => { editProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Редактировать</button>
+				<a href="/projects/{cm.projectId}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Открыть</a>
+				<button onclick={() => { editProject(cm.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Редактировать</button>
 				<div class="my-1 border-t border-gray-100"></div>
-				<button onclick={async () => { const p = projects.find(x => x.id === contextMenu.projectId); if (p) await toggleActive(contextMenu.projectId, p.is_active); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm {projects.find(x => x.id === contextMenu.projectId)?.is_active ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}">{projects.find(x => x.id === contextMenu.projectId)?.is_active ? 'Остановить' : 'Запустить'}</button>
-				<button onclick={async () => { await copyProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Копировать (с запросами)</button>
+				<button onclick={async () => { const p = projects.find(x => x.id === cm.projectId); if (p) await toggleActive(cm.projectId, p.is_active); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm {projects.find(x => x.id === cm.projectId)?.is_active ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}">{projects.find(x => x.id === cm.projectId)?.is_active ? 'Остановить' : 'Запустить'}</button>
+				<button onclick={async () => { await copyProject(cm.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Копировать (с запросами)</button>
 				<div class="my-1 border-t border-gray-100"></div>
-				<button onclick={async () => { await deleteProject(contextMenu.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+				<button onclick={async () => { await deleteProject(cm.projectId); contextMenu = null; }} class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Удалить</button>
 			</div>
 		</div>
 	{/if}

@@ -56,7 +56,7 @@
 						<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/projects</span>
 					</div>
-					<p class="text-sm text-gray-600">Создание проекта. Тело: <code class="text-xs">{ name, domain, region, schedule_type }</code></p>
+					<p class="text-sm text-gray-600">Создание проекта. Тело: <code class="text-xs">&#123; name, domain, region, schedule_type &#125;</code></p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -80,7 +80,7 @@
 						<span class="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/queue/push</span>
 					</div>
-					<p class="text-sm text-gray-600">Добавление задач в очередь. Тело: { project_id, tasks: [...] }.</p>
+					<p class="text-sm text-gray-600">Добавление задач в очередь. Тело: <code class="bg-gray-100 px-1 rounded">&#123; project_id, tasks: [...] &#125;</code>.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -88,7 +88,7 @@
 						<span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/queue/results</span>
 					</div>
-					<p class="text-sm text-gray-600">Отправка результатов взаимодействия. Тело: { project_id, results: [...] }.</p>
+					<p class="text-sm text-gray-600">Отправка результатов взаимодействия. Тело: <code class="bg-gray-100 px-1 rounded">&#123; project_id, results: [...] &#125;</code>.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -120,7 +120,7 @@
 						<span class="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs font-bold">GET</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/health</span>
 					</div>
-					<p class="text-sm text-gray-600">Проверка доступности API. Возвращает { status: "ok" }.</p>
+					<p class="text-sm text-gray-600">Проверка доступности API. Возвращает <code class="bg-gray-100 px-1 rounded">&#123; status: "ok" &#125;</code>.</p>
 				</div>
 			</div>
 		</section>
@@ -231,9 +231,7 @@
 						<span class="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/projects/{id}/queries/bulk-update</span>
 					</div>
-					<p class="text-sm text-gray-600">Массовое обновление запросов. Тело: { query_ids, daily_clicks?, geo?
-
-, click_url? }.</p>
+					<p class="text-sm text-gray-600">Массовое обновление запросов. Тело: <code class="bg-gray-100 px-1 rounded">&#123; query_ids, daily_clicks?, geo?, click_url? &#125;</code>.</p>
 				</div>
 			</div>
 		</section>
@@ -264,18 +262,30 @@
 			<h2 class="text-xl font-semibold text-gray-900 mb-4">Настройки внешних сервисов (JSON)</h2>
 			<div class="space-y-3 text-sm">
 				<div class="bg-gray-50 rounded-lg p-4 font-mono text-xs overflow-x-auto">
-{
-  "xml_river": {
+<span>&#123;
+
+  "xml_river": &#123;
+
     "user_id": "string",
+
     "apk": "string"
-  },
+
+  &#125;,
+
   "xml_stock": [
-    {
+
+    &#123;
+
       "name": "key_name_1",
+
       "api_key": "string"
-    }
+
+    &#125;
+
   ]
-}
+
+&#125;
+</span>
 				</div>
 			</div>
 		</section>
