@@ -475,7 +475,7 @@
 								<td class="px-4 py-3">
 									<span class="font-mono font-bold {positionClass(point.position)}">#{point.position}</span>
 								</td>
-								<td class="px-4 py-3 text-gray-500">{formatDate(point.date)}</td>
+								<td class="px-4 py-3 text-gray-500">{point.date ? formatDate(point.date) : '—'}</td>
 								<td class="px-4 py-3">
 									<span class="inline-flex px-2 py-1 rounded-full text-xs font-medium {
 										point.position <= 3 ? 'bg-green-100 text-green-800' :

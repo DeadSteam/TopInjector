@@ -22,6 +22,17 @@
 	let isConnected = $state(false);
 	let lastUpdate = $state<string>("");
 	let projectId = $state("");
+	let showTaskDetail = $state(false);
+	let taskDetail = $state<QueueTask | null>(null);
+
+	function openTaskDetail(id: string): void {
+		const task = tasks.find(t => t.id === id);
+		if (task) {
+			taskDetail = task;
+			showTaskDetail = true;
+		}
+	}
+
 	let eventSource: EventSource | null = null;
 
 	const statusColors: Record<string, string> = {
