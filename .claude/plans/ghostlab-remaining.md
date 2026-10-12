@@ -76,10 +76,10 @@
 
 **Файлы:** `frontend/src/routes/(app)/+page.svelte`, `api.ts`
 
-### 4.1 Filter Panel — region / strategy / integration / access
+### 4.1 Filter Panel — region / strategy / integration / access ✅ COMPLETED
 - Выпадающая панель с фильтрами (расширение существующих filter states)
-- Фильтр по интеграции: select из списка (default/test/main_bay_belarus)  
-- Фильтр по доступу: own/delegated-to/delegated-by
+- Фильтр по интеграции: select из списка (google-search-console, yandex-webmaster, custom)
+- Фильтр по доступу: all / delegated-to
 
 ### 4.2 Mass Edit Toolbar — checkbox selection → toolbar panel
 - Панель появляется при selectedProjectIds > 0
