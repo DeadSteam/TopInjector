@@ -376,7 +376,8 @@ async def test_is_delegate_in_listing(client: AsyncClient, project_with_delegate
 
     resp = await client.get("/api/projects/")
     assert resp.status_code == codes.OK
-    projects = resp.json()
+    data = resp.json()
+    projects = data.get("items", [])
     proj_entry = next((p for p in projects if p["id"] == project_id), None)
     assert proj_entry is not None, f"Project {project_id} not found in listing"
     assert proj_entry["is_delegate"] is True
@@ -386,7 +387,8 @@ async def test_not_delegate_in_listing(client: AsyncClient, project_with_user):
     """Non-delegated project shows is_delegate=false."""
     resp = await client.get("/api/projects/")
     assert resp.status_code == codes.OK
-    projects = resp.json()
+    data = resp.json()
+    projects = data.get("items", [])
     proj_entry = next((p for p in projects if p["id"] == project_with_user[0]), None)
     assert proj_entry is not None
     assert proj_entry["is_delegate"] is False

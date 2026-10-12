@@ -33,19 +33,15 @@ def upgrade() -> None:
     )
     op.create_index("ix_project_groups_user_id", "project_groups", ["user_id"], unique=False)
 
-    # add group_id column to projects
-    op.add_column(
-        "projects",
-        sa.Column("group_id", sa.Uuid(), nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_projects_group_id", "projects", "project_groups",
-        ["group_id"], ["id"], ondelete="SET NULL"
-    )
+    # add group_id column to projects (batch for SQLite FK support)
+    with op.batch_alter_table("projects") as batch_op:
+        batch_op.add_column(sa.Column("group_id", sa.Uuid(), nullable=True))
+        batch_op.create_foreign_key("fk_projects_group_id", "project_groups", ["group_id"], ["id"], ondelete="SET NULL")
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_projects_group_id", "projects", type_="foreignkey")
-    op.drop_column("projects", "group_id")
+    with op.batch_alter_table("projects") as batch_op:
+        batch_op.drop_constraint("fk_projects_group_id", type_="foreignkey")
+        batch_op.drop_column("group_id")
     op.drop_index("ix_project_groups_user_id", table_name="project_groups")
     op.drop_table("project_groups")

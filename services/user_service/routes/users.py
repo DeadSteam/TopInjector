@@ -202,3 +202,55 @@ async def change_password(
     user.hashed_password = pwd_ctx.hash(new_pw)  # type: ignore[attr-defined]
     await session.commit()
     return {"updated": True}
+
+
+# --- Avatar upload/delete --------------------------------------------------- #
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Upload avatar URL for the current user. Expects JSON body with 'avatar_url' field."""
+    from sqlalchemy import select as sa_select
+
+    if "avatar_url" not in body:
+        raise HTTPException(status_code=400, detail="avatar_url is required")
+
+    from services.auth_service.domain.models import User as UserModel
+    result = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = result.scalar_one_or_none()
+    if u:
+        u.avatar_url = body["avatar_url"]  # type: ignore[attr-defined]
+
+    await session.commit()
+    return {"updated": True, "avatar_url": body["avatar_url"]}
+
+
+@router.delete("/avatar")
+async def delete_avatar(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete avatar URL for the current user."""
+    from sqlalchemy import select as sa_select
+
+    from services.auth_service.domain.models import User as UserModel
+    result = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = result.scalar_one_or_none()
+    if u:
+        u.avatar_url = None  # type: ignore[attr-defined]
+
+    await session.commit()
+    return {"deleted": True}
+
+
+@router.get("/avatar")
+async def get_avatar(
+    user: User = Depends(get_current_user),
+):
+    """Get current avatar URL."""
+    av = getattr(user, "avatar_url", None)
+    return {"avatar_url": av}

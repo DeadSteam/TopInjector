@@ -7,7 +7,7 @@ import json as _json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
-from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast, and_
+from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast, and_, or_
 from sqlalchemy.types import Date as sa_Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1188,6 +1188,50 @@ async def auto_stop_project(
     return {"stopped": True}
 
 
+@router.put("/{project_id}/auto-stop")
+async def set_auto_stop(
+    project_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Set auto_stop_at date/time for automatic project stop."""
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    auto_stop_raw = body.get("auto_stop_at")
+    if auto_stop_raw is None:
+        project.auto_stop_at = None  # type: ignore[attr-defined]
+    else:
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(auto_stop_raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            project.auto_stop_at = dt  # type: ignore[attr-defined]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid auto_stop_at format (ISO-8601)")
+
+    await session.commit()
+    return {
+        "auto_stop_at": project.auto_stop_at.isoformat() if project.auto_stop_at else None,  # type: ignore[attr-defined]
+    }
+
+
+@router.get("/{project_id}/auto-stop")
+async def get_auto_stop(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get current auto_stop_at value for a project."""
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "auto_stop_at": project.auto_stop_at.isoformat() if project.auto_stop_at else None,  # type: ignore[attr-defined]
+    }
+
+
 @router.post("/{project_id}/activate")
 async def activate_project(
     project_id: str,
@@ -1288,6 +1332,264 @@ async def get_project_clicks(
     ]
 
 
+# --- Global Search ------------------------------------------------------------ #
+
+
+@router.get("/global-search")
+async def global_search(
+    q: str = Query(..., min_length=1),
+    session: AsyncSession = Depends(get_session),
+):
+    """Search across groups, projects and queries. Returns grouped results with navigation hrefs."""
+    from services.project_service.domain.models import ProjectGroup
+
+    pattern = f"%{q}%"
+
+    # Search groups
+    group_result = await session.execute(
+        select(ProjectGroup).where(ProjectGroup.name.ilike(pattern))
+    )
+    groups = group_result.scalars().all()
+
+    # Search projects (matching name or domain)
+    proj_result = await session.execute(
+        select(Project).where(
+            or_(
+                Project.name.ilike(pattern),
+                Project.domain.ilike(pattern),
+            )
+        ).limit(50)
+    )
+    projects = proj_result.scalars().all()
+
+    # Search queries (matching text) — limit to avoid huge result sets
+    query_result = await session.execute(
+        select(_QueryModel).where(_QueryModel.text.ilike(pattern)).limit(30)
+    )
+    queries_raw = query_result.scalars().all()
+
+    return {
+        "groups": [
+            {"id": str(g.id), "name": g.name, "href": f"/?group_id={str(g.id)}"}
+            for g in groups
+        ],
+        "projects": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "domain": p.domain,
+                "href": f"/projects/{str(p.id)}",
+            }
+            for p in projects
+        ],
+        "queries": [
+            {
+                "id": str(qi.id),
+                "text": qi.text,
+                "project_id": str(qi.project_id),
+                "href": f"/projects/{str(qi.project_id)}?tab=queries&query={qi.text}",
+            }
+            for qi in queries_raw
+        ],
+    }
+
+
+# --- Bulk project operations -------------------------------------------------- #
+
+
+@router.post("/bulk-toggle")
+async def bulk_toggle_projects(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Toggle is_active for a list of projects by IDs."""
+    from services.auth_service.domain.models import User
+
+    user_id_raw = body.get("user_id")
+    try:
+        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    project_ids: list[str] = body.get("project_ids", [])
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids is required")
+
+    new_active = bool(body.get("is_active"))
+    updated = 0
+
+    for pid in project_ids:
+        try:
+            puuid = UUID(pid)
+        except (ValueError, TypeError):
+            continue
+        result = await session.execute(
+            select(Project).where(Project.id == puuid, Project.user_id == uid)
+        )
+        proj = result.scalar_one_or_none()
+        if proj:
+            proj.is_active = new_active  # type: ignore[attr-defined]
+            updated += 1
+
+    await session.commit()
+    return {"updated": updated}
+
+
+@router.post("/bulk-edit")
+async def bulk_edit_projects(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Bulk-edit projects by ID set (daily_limit, region, geo_settings, scheduling_window, query_modifications)."""
+    from services.auth_service.domain.models import User
+
+    user_id_raw = body.get("user_id")
+    try:
+        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    project_ids: list[str] = body.get("project_ids", [])
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids is required")
+
+    updates: dict = {}
+    if "daily_limit" in body:
+        dl = int(body["daily_limit"])
+        if dl < 0:
+            raise HTTPException(status_code=400, detail="daily_limit must be >= 0")
+        updates["daily_limit"] = dl
+    if "region" in body:
+        updates["region"] = str(body["region"])
+    if "geo_settings" in body:
+        try:
+            _json.loads(_json.dumps(body["geo_settings"]))
+            updates["geo_settings"] = body["geo_settings"]
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid geo_settings JSON")
+    if "scheduling_window" in body:
+        updates["scheduling_window"] = body["scheduling_window"]
+    if "query_modifications" in body:
+        updates["query_modifications"] = body["query_modifications"]
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updated = 0
+    for pid in project_ids:
+        try:
+            puuid = UUID(pid)
+        except (ValueError, TypeError):
+            continue
+        result = await session.execute(
+            select(Project).where(Project.id == puuid, Project.user_id == uid)
+        )
+        proj = result.scalar_one_or_none()
+        if proj:
+            for k, v in updates.items():
+                setattr(proj, k, v)  # type: ignore[arg-type]
+            updated += 1
+
+    await session.commit()
+    return {"updated": updated}
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_projects(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete projects by ID set (cascades to queries, tasks)."""
+    from services.auth_service.domain.models import User
+
+    user_id_raw = body.get("user_id")
+    try:
+        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    project_ids: list[str] = body.get("project_ids", [])
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids is required")
+
+    deleted = 0
+    for pid in project_ids:
+        try:
+            puuid = UUID(pid)
+        except (ValueError, TypeError):
+            continue
+        result = await session.execute(
+            select(Project).where(Project.id == puuid, Project.user_id == uid)
+        )
+        proj = result.scalar_one_or_none()
+        if proj:
+            await session.delete(proj)
+            deleted += 1
+
+    await session.commit()
+    return {"deleted": deleted}
+
+
+@router.post("/bulk-delegate")
+async def bulk_delegate_projects(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Add delegate access to multiple projects for a single user."""
+    from services.auth_service.domain.models import User
+
+    user_id_raw = body.get("user_id")
+    try:
+        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    project_ids: list[str] = body.get("project_ids", [])
+    delegate_uid_raw = body.get("delegate_user_id")
+    if not delegate_uid_raw:
+        raise HTTPException(status_code=400, detail="delegate_user_id is required")
+    try:
+        delegate_uid = UUID(delegate_uid_raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid delegate_user_id")
+
+    role = body.get("role", "view")
+    added = 0
+
+    for pid in project_ids:
+        try:
+            puuid = UUID(pid)
+        except (ValueError, TypeError):
+            continue
+        result = await session.execute(
+            select(Project).where(Project.id == puuid, Project.user_id == uid)
+        )
+        proj = result.scalar_one_or_none()
+        if not proj:
+            continue
+        existing = await session.execute(
+            select(ProjectDelegate).where(
+                and_(  # type: ignore[assignment]
+                    ProjectDelegate.project_id == puuid,
+                    ProjectDelegate.delegate_user_id == delegate_uid,
+                )
+            )
+        )
+        if not existing.scalar_one_or_none():
+            invite = ProjectDelegate(
+                id=uuid4(),
+                project_id=puuid,
+                delegate_user_id=delegate_uid,
+                inviter_user_id=uid,
+                role=role,
+            )
+            session.add(invite)
+            added += 1
+
+    await session.commit()
+    return {"added": added}
+
+
 # --- Bulk query operations -------------------------------------------------- #
 
 
@@ -1366,3 +1668,178 @@ async def bulk_update_queries(
 
     await session.commit()
     return {"updated": updated}
+
+
+# --- Report Export ------------------------------------------------------------ #
+
+
+@router.get("/{project_id}/reports/analytics.csv")
+async def export_analytics_report(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    from_date: str = Query(default=None),
+    to_date: str = Query(default=None),
+):
+    """Export analytics report (clicks, positions, completed_rate) as CSV."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    date_filter: list = []
+    if from_date:
+        try:
+            fd = _dt.fromisoformat(from_date).replace(tzinfo=_tz.utc)
+            date_filter.append(QueueTask.created_at >= fd)
+        except (ValueError, TypeError):
+            pass
+    if to_date:
+        try:
+            td = _dt.fromisoformat(to_date).replace(tzinfo=_tz.utc)
+            date_filter.append(QueueTask.created_at <= td)
+        except (ValueError, TypeError):
+            pass
+
+    base_where = [QueueTask.project_id == UUID(project_id)] + date_filter
+    result = await session.execute(
+        select(
+            _QueryModel.text,
+            func.count(QueueTask.id).label("total_tasks"),
+            func.sum(
+                sa_case((QueueTask.status == "completed", 1), else_=0)
+            ).label("completed"),
+            func.avg(
+                sa_case(
+                    ((QueueTask.status == "completed") & (QueueTask.position.isnot(None)), QueueTask.position),
+                    else_=None,
+                )
+            ).label("avg_position"),
+        )
+        .join(QueueTask, _QueryModel.id == QueueTask.query_id, isouter=True)
+        .where(*base_where)  # type: ignore[arg-type]
+        .group_by(_QueryModel.id, _QueryModel.text)
+    )
+
+    rows = result.all()
+
+    output = _io.StringIO()
+    writer = _csv.writer(output)
+    writer.writerow(["query_text", "total_tasks", "completed", "completed_rate", "avg_position"])
+    for r in rows:
+        completed_rate = round((r.completed / (r.total_tasks or 1) * 100), 2) if (r.total_tasks or 0) > 0 else 0
+        writer.writerow([
+            r.text,
+            r.total_tasks or 0,
+            r.completed or 0,
+            completed_rate,
+            round(float(r.avg_position), 2) if r.avg_position else None,
+        ])
+
+    from fastapi.responses import Response as FastAPIResponse
+
+    safe_name = project.name.replace(" ", "_")[:50]
+    return FastAPIResponse(
+        content=output.getvalue(),
+        headers={
+            "Content-Disposition": f"attachment; filename={safe_name}_analytics.csv",
+        },
+        media_type="text/csv",
+    )
+
+
+@router.get("/{project_id}/reports/summary.csv")
+async def export_summary_report(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    from_date: str = Query(default=None),
+    to_date: str = Query(default=None),
+):
+    """Export high-level summary report as CSV."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    project = await session.get(Project, UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    date_filter: list = []
+    if from_date:
+        try:
+            fd = _dt.fromisoformat(from_date).replace(tzinfo=_tz.utc)
+            date_filter.append(QueueTask.created_at >= fd)
+        except (ValueError, TypeError):
+            pass
+    if to_date:
+        try:
+            td = _dt.fromisoformat(to_date).replace(tzinfo=_tz.utc)
+            date_filter.append(QueueTask.created_at <= td)
+        except (ValueError, TypeError):
+            pass
+
+    base_where = [QueueTask.project_id == UUID(project_id)] + date_filter
+
+    agg_result = await session.execute(
+        select(
+            func.count(QueueTask.id).label("total_tasks"),
+            func.sum(sa_case((QueueTask.status == "completed", 1), else_=0)).label("total_completed"),
+            func.avg(
+                sa_case(
+                    ((QueueTask.status == "completed") & (QueueTask.position.isnot(None)), QueueTask.position),
+                    else_=None,
+                )
+            ).label("overall_avg_position"),
+        )
+        .where(*base_where)  # type: ignore[arg-type]
+    )
+    agg = agg_result.one()
+
+    top_pos_result = await session.execute(
+        select(_QueryModel.text, QueueTask.position).where(
+            and_(  # type: ignore[arg-type]
+                QueueTask.project_id == UUID(project_id),
+                QueueTask.status == "completed",
+                QueueTask.position.isnot(None),
+                *date_filter,
+            )
+        ).order_by(QueueTask.position).limit(100)
+    )
+    top_rows = top_pos_result.all()
+
+    output = _io.StringIO()
+    writer = _csv.writer(output)
+    writer.writerow(["report_type", "TopInjector Summary Report"])
+    writer.writerow(["project_name", project.name])
+    writer.writerow(["domain", project.domain])
+    if from_date:
+        writer.writerow(["period_from", from_date])
+    if to_date:
+        writer.writerow(["period_to", to_date])
+    writer.writerow([])
+    writer.writerow(["metric", "value"])
+    writer.writerow(["total_tasks", agg.total_tasks or 0])
+    writer.writerow(["total_completed", agg.total_completed or 0])
+    completed_rate = round(
+        ((agg.total_completed or 0) / max(agg.total_tasks or 1, 1) * 100), 2
+    )
+    writer.writerow(["completion_rate_pct", completed_rate])
+    writer.writerow(["avg_position", round(float(agg.overall_avg_position), 2) if agg.overall_avg_position else None])
+    writer.writerow([])
+    writer.writerow(["query_text", "best_position"])
+    pos_map: dict[str, int] = {}
+    for r in top_rows:
+        txt, pos_val = r[0], r[1]
+        if txt and pos_val is not None and (txt not in pos_map or pos_val < pos_map[txt]):
+            pos_map[txt] = pos_val
+    for txt in sorted(pos_map):
+        writer.writerow([txt, pos_map[txt]])
+
+    from fastapi.responses import Response as FastAPIResponse
+
+    safe_name = project.name.replace(" ", "_")[:50]
+    return FastAPIResponse(
+        content=output.getvalue(),
+        headers={
+            "Content-Disposition": f"attachment; filename={safe_name}_summary.csv",
+        },
+        media_type="text/csv",
+    )

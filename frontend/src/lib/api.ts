@@ -194,6 +194,40 @@ export const api = {
 		},
 		bulkUpdateQueries: (projectId: string, data: any) =>
 			fetcher(`/api/projects/${projectId}/queries/bulk-update`, { method: "POST", body: JSON.stringify(data) }),
+		globalSearch: (q: string) =>
+			fetcher(`/api/projects/global-search?q=${encodeURIComponent(q)}`),
+		bulkToggle: (data: { project_ids: string[]; is_active: boolean }) =>
+			fetcher("/api/projects/bulk-toggle", { method: "POST", body: JSON.stringify(data) }),
+		bulkEdit: (data: { project_ids: string[]; [key: string]: any }) =>
+			fetcher("/api/projects/bulk-edit", { method: "POST", body: JSON.stringify(data) }),
+		bulkDelete: (data: { project_ids: string[] }) =>
+			fetcher("/api/projects/bulk-delete", { method: "POST", body: JSON.stringify(data) }),
+		bulkDelegate: (data: { project_ids: string[]; delegate_user_id: string; role: string }) =>
+			fetcher("/api/projects/bulk-delegate", { method: "POST", body: JSON.stringify(data) }),
+		reportAnalytics: (projectId: string, params?: { from_date?: string; to_date?: string }) => {
+			let path = `/api/projects/${projectId}/reports/analytics.csv`;
+			if (params) {
+				const qs = new URLSearchParams();
+				if (params.from_date) qs.set("from_date", params.from_date);
+				if (params.to_date) qs.set("to_date", params.to_date);
+				path += "?" + qs.toString();
+			}
+			return fetch(path).then(r => r.blob());
+		},
+		reportSummary: (projectId: string, params?: { from_date?: string; to_date?: string }) => {
+			let path = `/api/projects/${projectId}/reports/summary.csv`;
+			if (params) {
+				const qs = new URLSearchParams();
+				if (params.from_date) qs.set("from_date", params.from_date);
+				if (params.to_date) qs.set("to_date", params.to_date);
+				path += "?" + qs.toString();
+			}
+			return fetch(path).then(r => r.blob());
+		},
+		autoStop: (projectId: string, data: { auto_stop_at?: string | null }) =>
+			fetcher(`/api/projects/${projectId}/auto-stop`, { method: "PUT", body: JSON.stringify(data) }),
+		getAutoStop: (projectId: string) =>
+			fetcher(`/api/projects/${projectId}/auto-stop`),
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),
@@ -271,6 +305,11 @@ export const api = {
 			fetcher("/api/users/settings/external-services", { method: "POST", body: JSON.stringify(data) }),
 		changePassword: (data: any) =>
 			fetcher("/api/users/password", { method: "POST", body: JSON.stringify(data) }),
+		uploadAvatar: (data: { avatar_url: string }) =>
+			fetcher("/api/users/avatar", { method: "POST", body: JSON.stringify(data) }),
+		deleteAvatar: () =>
+			fetcher("/api/users/avatar", { method: "DELETE" }),
+		getAvatar: () => fetcher("/api/users/avatar"),
 	},
 	notifications: {
 		list: () => fetcher("/api/notifications/"),

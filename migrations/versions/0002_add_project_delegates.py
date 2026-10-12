@@ -36,9 +36,12 @@ def upgrade() -> None:
     )
     op.create_index("ix_project_delegates_project_id", "project_delegates", ["project_id"], unique=False)
     op.create_index("ix_project_delegates_delegate_user_id", "project_delegates", ["delegate_user_id"], unique=False)
+    op.create_index("ix_project_delegates_inviter_user_id", "project_delegates", ["inviter_user_id"], unique=False)
 
 
 def downgrade() -> None:
+    op.drop_index("ix_project_delegates_inviter_user_id", table_name="project_delegates")
     op.drop_index("ix_project_delegates_delegate_user_id", table_name="project_delegates")
     op.drop_index("ix_project_delegates_project_id", table_name="project_delegates")
-    op.drop_table("project_delegates")
+    with op.batch_alter_table("project_delegates", schema=None) as batch_op:
+        op.drop_table("project_delegates")
