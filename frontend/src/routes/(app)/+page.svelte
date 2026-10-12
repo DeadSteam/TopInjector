@@ -37,6 +37,8 @@
 	let filterRegion = $state<string>("all");
 	let filterStrategy = $state<string>("all");
 	let filterActive = $state<string>("all");
+	let filterIntegration = $state<string>("all");
+	let filterAccess = $state<string>("all"); // own, delegated-to, all
 
 	// Column visibility
 	let showRegionCol = $state(true);
@@ -125,6 +127,8 @@
 		if (filterRegion !== "all") params.region = filterRegion;
 		if (filterStrategy !== "all") params.strategy_type = filterStrategy;
 		if (filterActive !== "all") params.is_active = filterActive === "true";
+		if (filterIntegration !== "all" && filterIntegration !== "") params.integration_type = filterIntegration;
+		if (filterAccess === "delegated-to") params.only_delegated = "true";
 		params.page = currentPage;
 		params.page_size = pageSize;
 
@@ -574,6 +578,18 @@
 			<option value="false">Неактивные</option>
 		</select>
 
+		<select bind:value={filterIntegration} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+			<option value="all">Все интеграции</option>
+			<option value="google-search-console">Google Search Console</option>
+			<option value="yandex-webmaster">Яндекс Вебмастер</option>
+			<option value="custom">Custom URL</option>
+		</select>
+
+		<select bind:value={filterAccess} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+			<option value="all">Все</option>
+			<option value="delegated-to">Делегированные мне</option>
+		</select>
+
 		<!-- Column config -->
 		<div class="relative">
 			<button onclick={() => toggleCol('region')} class={`px-2 py-1 text-xs border rounded-lg transition-colors ${showRegionCol ? 'bg-green-50 text-green-700 border-green-300' : 'text-gray-400 border-gray-300'}`}>
@@ -697,17 +713,15 @@
 								{/if}
 								<!-- Source breakdown -->
 								{#if showSourceBreakdown}
-									{#let sb = sourceData[project.id]}
-										<td class="px-4 py-3 text-green-600 font-medium">
-											{sb?.completed_by_source.strategy ?? '—'}
-										</td>
-										<td class="px-4 py-3 text-blue-600 font-medium">
-											{sb?.completed_by_source.autoburst ?? '—'}
-										</td>
-										<td class="px-4 py-3 text-purple-600 font-medium">
-											{sb?.completed_by_source.proklik ?? '—'}
-										</td>
-									{/let}
+									<td class="px-4 py-3 text-green-600 font-medium">
+										{(sourceData[project.id]?.completed_by_source.strategy) ?? '—'}
+									</td>
+									<td class="px-4 py-3 text-blue-600 font-medium">
+										{(sourceData[project.id]?.completed_by_source.autoburst) ?? '—'}
+									</td>
+									<td class="px-4 py-3 text-purple-600 font-medium">
+										{(sourceData[project.id]?.completed_by_source.proklik) ?? '—'}
+									</td>
 								{/if}
 								<!-- Actions -->
 								{#if showActionsCol}
