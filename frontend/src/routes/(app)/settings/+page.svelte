@@ -25,6 +25,7 @@
 
 	// Password change
 	let currentPassword = $state("");
+	let avatarUrl = $state("");
 	let newPassword = $state("");
 	let confirmNewPassword = $state("");
 	let passwordChanged = $state(false);
@@ -157,6 +158,41 @@
 
 			<!-- Messenger integration -->
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+
+			<!-- Avatar Section -->
+			<div class="border-t border-gray-200 pt-6 mt-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Аватар профиля</h2>
+				{#if profile && profile.avatar_url}
+					<div class="flex items-center gap-4">
+						<img src={profile.avatar_url} alt="Avatar" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200" />
+						<div>
+							<p class="text-sm text-gray-600">Аватар загружен</p>
+							<button
+								onclick={async () => {
+									try { await api.users.deleteAvatar(); profile.avatar_url = null; } catch(e) { console.error("Delete avatar failed:", e); }
+								}}
+								class="mt-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg transition-colors">
+								Удалить аватар
+							</button>
+						</div>
+					</div>
+				{:else}
+					<p class="text-sm text-gray-500 mb-3">У вас нет аватара. Укажите URL изображения для загрузки.</p>
+					<div class="flex gap-2 items-end">
+						<input type="url" bind:value={avatarUrl} placeholder="https://example.com/avatar.jpg"
+							class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+						<button
+							onclick={async () => {
+								if (!avatarUrl.trim()) return;
+								try { await api.users.uploadAvatar({ avatar_url: avatarUrl }); profile.avatar_url = avatarUrl; avatarUrl = ""; }
+								catch(e) { console.error("Upload avatar failed:", e); }
+							}}
+							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors">
+							Загрузить
+						</button>
+					</div>
+				{/if}
+			</div>
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">Мессенджеры</h2>
 				{#if messengerSaved}
 					<div class="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">Сохранено</div>

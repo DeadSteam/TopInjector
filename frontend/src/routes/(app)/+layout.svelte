@@ -15,7 +15,7 @@
 	// Global search (Ctrl+E)
 	let showGlobalSearch = $state(false);
 	let globalQuery = $state("");
-	let globalSearchResults: any[] = [];
+	let globalResults = $state({ groups: [] as any[], projects: [] as any[], queries: [] as any[] });
 	let searchingGlobal = $state(false);
 	let searchDebounce = 0;
 
@@ -97,24 +97,20 @@
 		api.auth.logout();
 	}
 
-	async function globalSearchProjects() {
-		if (!globalQuery.trim()) {
-			globalSearchResults = [];
+		async function globalSearchProjects() {
+			if (!globalQuery.trim()) {
+			globalResults = { groups: [], projects: [], queries: [] };
 			return;
+			}
+			searchingGlobal = true;
+			try {
+			const res = await api.projects.globalSearch(globalQuery);
+			globalResults = res || { groups: [], projects: [], queries: [] };
+			} catch {
+			globalResults = { groups: [], projects: [], queries: [] };
+			}
+			searchingGlobal = false;
 		}
-		searchingGlobal = true;
-		try {
-			const list = await api.projects.list({ search: globalQuery });
-			globalSearchResults = (list || []).map((p: any) => ({
-				type: 'project',
-				id: p.id,
-				label: p.name,
-				sub: `${p.domain} · ${p.group_name || 'Без группы'}`,
-				href: `/projects/${p.id}`
-			}));
-		} catch { globalSearchResults = []; }
-		searchingGlobal = false;
-	}
 
 	function navigateToResult(item: any) {
 		if (item.href) {
@@ -136,9 +132,7 @@
 
 		<nav class="space-y-1 flex-1">
 			{#each getNavItems() as item}
-				<a href={item.path} class="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors"
-					class:{"bg-white/10 text-white": isActive(item.path)}
-					class:{"text-gray-400 hover:text-white hover:bg-white/5": !isActive(item.path)}>
+				<a href={item.path} class={(isActive(item.path) ? "bg-white/10 text-white" : "text-gray-400 hover:text-white hover:bg-white/5") + " flex items-center gap-3 px-3 py-2 rounded-lg transition-colors"}>
 					<div innerHTML={item.icon}></div>
 					<span>{item.label}</span>
 				</a>
@@ -243,39 +237,65 @@
 						<svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
 						</svg>
-						<input type="text" bind:value={globalQuery} placeholder="Поиск проектов (Ctrl+E)..." class="flex-1 text-base outline-none" oninput={globalSearchProjects} />
+						<input type="text" bind:value={globalQuery} placeholder="Глобальный поиск..." class="flex-1 text-base outline-none" oninput={globalSearchProjects} />
 						<span class="text-xs text-gray-400 border border-gray-300 rounded px-1.5 py-0.5">Esc</span>
 					</div>
 
 					<!-- Results -->
 					<div class="max-h-80 overflow-y-auto">
 						{#if searchingGlobal}
-							<div class="px-4 py-3 text-sm text-gray-400 text-center">Поиск...</div>
-						{:else if globalQuery.trim() && globalSearchResults.length === 0}
-							<div class="px-4 py-3 text-sm text-gray-400 text-center">Ничего не найдено</div>
-						{:else if globalSearchResults.length > 0}
-							{#each globalSearchResults as result}
-								<a href={result.href} class="block px-4 py-2 hover:bg-blue-50 transition-colors border-b border-gray-100">
+							<div class="px-4 py-3 text-sm text-gray-400 text-center">Search...</div>
+						{:else if !globalQuery.trim()}
+							<div class="px-4 py-3 text-sm text-gray-400 text-center">Введите минимум 2 символа</div>
+						{:else}
+
+						{#if globalResults.groups && globalResults.groups.length > 0}
+							<div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Группы</div>
+							{#each globalResults.groups as g}
+								<a href={g.href} class="block px-4 py-2 hover:bg-blue-50 transition-colors">
 									<div class="flex items-center gap-3">
-										<span class="text-blue-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></span>
-										<div>
-											<p class="text-sm font-medium text-gray-900">{result.label}</p>
-											<p class="text-xs text-gray-500">{result.sub}</p>
-										</div>
+										<span class="text-gray-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2 2z"/></svg></span>
+										<div><p class="text-sm font-medium text-gray-900">{g.label}</p><p class="text-xs text-gray-500">Группа</p></div>
 									</div>
 								</a>
 							{/each}
-						{:else if globalQuery.trim()}
-							<div class="px-4 py-3 text-sm text-gray-400 text-center">Введите минимум 2 символа...</div>
 						{/if}
-					</div>
 
-					<!-- Footer hints -->
-					{#if !globalQuery.trim() && globalSearchResults.length === 0}
-						<div class="px-4 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-400">
-							<p>Нажмите <kbd class="px-1.5 py-0.5 bg-white border border-gray-300 rounded text-[10px] font-mono">Ctrl+E</kbd> для быстрого поиска.</p>
-						</div>
+						{#if globalResults.projects && globalResults.projects.length > 0}
+							<div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Проекты</div>
+							{#each globalResults.projects as p}
+								<a href={p.href} class="block px-4 py-2 hover:bg-blue-50 transition-colors">
+									<div class="flex items-center gap-3">
+										<span class="text-blue-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></span>
+										<div><p class="text-sm font-medium text-gray-900">{p.label}</p><p class="text-xs text-gray-500">{p.sub}</p></div>
+									</div>
+								</a>
+							{/each}
+						{/if}
+
+						{#if globalResults.queries && globalResults.queries.length > 0}
+							<div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Запросы</div>
+							{#each globalResults.queries as q}
+								<a href={q.href} class="block px-4 py-2 hover:bg-blue-50 transition-colors">
+									<div class="flex items-center gap-3">
+										<span class="text-yellow-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-6 4h6a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V10a2 2 0 012-2z"/></svg></span>
+										<div><p class="text-sm font-medium text-gray-900">{q.label}</p><p class="text-xs text-gray-500">{q.sub}</p></div>
+									</div>
+								</a>
+							{/each}
+						{/if}
+
+						{#if globalResults.groups.length === 0 && globalResults.projects.length === 0 && globalResults.queries.length === 0}
+							<div class="px-4 py-3 text-sm text-gray-400 text-center">Ничего не найдено</div>
+						{/if}
 					{/if}
+				</div>
+
+				{#if !globalQuery.trim()}
+					<div class="px-4 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-400">
+						<p>Нажмите <kbd class="px-1.5 py-0.5 bg-white border border-gray-300 rounded text-[10px] font-mono">Ctrl+E</kbd> для поиска.</p>
+					</div>
+				{/if}
 				</div>
 			</div>
 		{/if}

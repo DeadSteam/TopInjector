@@ -62,6 +62,7 @@
 
 	// Modals
 	let showCreateModal = $state(false);
+	$: if (showCreateModal) { multigeoRegions = []; showMultigeoBuilder = false; }
 	let showGroupModal = $state(false);
 	let editingGroup = $state<ProjectGroup | null>(null);
 	let createFormName = $state("");
@@ -82,6 +83,16 @@
 	// Context menu
 	let contextMenu = $state<{ x: number; y: number; projectId: string } | null>(null);
 	let editingProjectId = $state<string | null>(null);
+
+	// Bulk selection state
+	let selectedProjectIds = $state<string[]>([]);
+	let showBulkToolbar = $state(false);
+	let showBulkEditModal = $state(false);
+	let bulkEditDailyLimit = $state(0);
+	let bulkEditRegion = $state("");
+	let showMultigeoBuilder = $state(false);
+	// Multigeo regions: [{region: string, percentage: number}]
+	let multigeoRegions = $state<Array<{ region: string; percentage: number }>>([]);
 
 	async function loadData() {
 		try {
@@ -231,6 +242,13 @@
 		if (createFormModsTrailingSpace) mods.trailing_space = true;
 		if (Object.keys(mods).length > 0) data.query_modifications = mods;
 
+			// Geo settings - multigeo percentage builder
+			if (multigeoRegions.length > 0 && multigeoRegions.every(r => r.region && r.percentage > 0)) {
+				const geoPercents: Record<string, number> = {};
+				multigeoRegions.forEach(r => { geoPercents[r.region] = r.percentage; });
+				data.geo_settings = { type: "multigeo", percents: geoPercents };
+			}
+
 		try {
 			await api.projects.create(data);
 			showCreateModal = false;
@@ -241,6 +259,7 @@
 			createFormModsCapital = false; createFormModsRandomCaps = false;
 			createFormModsTypos = false; createFormModsTrailingSpace = false;
 			await loadProjects();
+				multigeoRegions = [];
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка создания";
 		}
@@ -264,6 +283,56 @@
 			error = err instanceof Error ? err.message : "Ошибка удаления";
 		}
 	}
+
+	async function bulkToggleSelected() {
+		if (selectedProjectIds.length === 0) return;
+		const anyActive = projects.some(p => selectedProjectIds.includes(p.id) && p.is_active);
+		try {
+			await api.projects.bulkToggle({ project_ids: [...selectedProjectIds], is_active: !anyActive });
+			selectedProjectIds = [];
+			showBulkToolbar = false;
+			await loadProjects();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Ошибка bulk-операции';
+		}
+	}
+
+	function bulkEditSelected() {
+		if (selectedProjectIds.length === 0) return;
+		showBulkEditModal = true;
+	}
+
+	async function bulkDeleteSelected() {
+		if (selectedProjectIds.length === 0 || !confirm('Удалить ' + selectedProjectIds.length + ' проектов?')) return;
+		try {
+			await api.projects.bulkDelete({ project_ids: [...selectedProjectIds] });
+			selectedProjectIds = [];
+			showBulkToolbar = false;
+			await loadProjects();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Ошибка bulk-удаления';
+		}
+	}
+
+	async function confirmBulkEdit() {
+		if (selectedProjectIds.length === 0) return;
+		const updates: any = {};
+		if (bulkEditDailyLimit > 0) updates.daily_limit = bulkEditDailyLimit;
+		if (bulkEditRegion) updates.region = bulkEditRegion;
+		if (!updates.daily_limit && !updates.region) { showBulkEditModal = false; return; }
+		try {
+			await api.projects.bulkEdit({ project_ids: [...selectedProjectIds], updates });
+			selectedProjectIds = [];
+			showBulkToolbar = false;
+			showBulkEditModal = false;
+			bulkEditDailyLimit = 0;
+			bulkEditRegion = '';
+			await loadProjects();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Ошибка bulk-редактирования';
+		}
+	}
+
 
 	function showContextMenu(e: MouseEvent, projectId: string) {
 		e.preventDefault();
@@ -310,6 +379,13 @@
 				createFormModsRandomCaps = !!full.query_modifications.random_caps;
 				createFormModsTypos = !!full.query_modifications.typos;
 				createFormModsTrailingSpace = !!full.query_modifications.trailing_space;
+			// Load geo settings for multigeo builder
+			if (full.geo_settings && full.geo_settings.type === "multigeo") {
+				const percents = full.geo_settings.percents || {};
+				multigeoRegions = Object.entries(percents).map(([region, percentage]) => ({ region, percentage }));
+			} else {
+				multigeoRegions = [];
+			}
 			}
 		}).catch(() => { /* fallback to defaults */ });
 	}
@@ -343,6 +419,13 @@
 		if (createFormModsTypos) mods.typos = true;
 		if (createFormModsTrailingSpace) mods.trailing_space = true;
 		data.query_modifications = mods;
+
+			// Geo settings - multigeo percentage builder
+			if (multigeoRegions.length > 0 && multigeoRegions.every(r => r.region && r.percentage > 0)) {
+				const geoPercents: Record<string, number> = {};
+				multigeoRegions.forEach(r => { geoPercents[r.region] = r.percentage; });
+				data.geo_settings = { type: "multigeo", percents: geoPercents };
+			}
 
 		try {
 			await api.projects.update(editingProjectId, data);
@@ -516,6 +599,17 @@
 				<table class="w-full text-sm">
 					<thead class="bg-gray-50 border-b border-gray-200">
 						<tr>
+							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10">
+							<input type="checkbox" checked={selectedProjectIds.length === projects.length && projects.length > 0} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+								onchange={(e) => {
+									const checked = (e.target as HTMLInputElement).checked;
+									if (checked) {
+										selectedProjectIds = projects.map(p => p.id);
+									} else {
+										selectedProjectIds = [];
+									}
+									showBulkToolbar = selectedProjectIds.length > 0;
+							}}} />
 							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10"></th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Название</th>
 							{#if showRegionCol}
@@ -544,6 +638,21 @@
 					<tbody>
 						{#each projects as project (project.id)}
 							<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+								<!-- Selection checkbox -->
+								<td class="px-4 py-3">
+									<label class="inline-flex cursor-pointer">
+							<input type="checkbox" checked={selectedProjectIds.includes(project.id)} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+										onchange={(e) => {
+											const checked = (e.target as HTMLInputElement).checked;
+											if (checked) {
+												selectedProjectIds = [...selectedProjectIds, project.id];
+											} else {
+												selectedProjectIds = selectedProjectIds.filter(id => id !== project.id);
+											}
+											showBulkToolbar = selectedProjectIds.length > 0;
+							}}} />
+									</label>
+								</td>
 								<!-- Active toggle -->
 								<td class="px-4 py-3">
 									{#if showActiveToggle}
@@ -658,6 +767,25 @@
 		</div>
 	{/if}
 
+	<!-- Bulk toolbar -->
+	{#if showBulkToolbar && selectedProjectIds.length > 0}
+		<div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+			<span class="text-sm font-medium text-gray-300">{selectedProjectIds.length} selected</span>
+			<div class="h-6 w-px bg-gray-700"></div>
+			<button onclick={bulkToggleSelected} class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors">
+				{projects.find(p => selectedProjectIds.includes(p.id))?.is_active ? 'Остановить' : 'Запустить'}
+			</button>
+			<button onclick={bulkEditSelected} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
+				Редактировать
+			</button>
+			<button onclick={bulkDeleteSelected} class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors">
+				Удалить
+			</button>
+			<div class="h-6 w-px bg-gray-700"></div>
+			<button onclick={() => { selectedProjectIds = []; showBulkToolbar = false; }} class="text-gray-400 hover:text-gray-200 text-xs">Снять выделение</button>
+		</div>
+	{/if}
+
 	<!-- Context menu -->
 	{#if contextMenu}
 		<div class="fixed z-50" style="left: {contextMenu.x}px; top: {contextMenu.y}px">
@@ -760,6 +888,32 @@
 							</label>
 						</div>
 					</div>
+
+					<!-- Multigeo percentage builder -->
+					<div class="border-t border-gray-200 pt-4 mt-4">
+						<div class="flex items-center justify-between mb-2">
+							<p class="text-sm font-medium text-gray-700">Мультигео (распределение по регионам)</p>
+							<button type="button" onclick={() => showMultigeoBuilder = !showMultigeoBuilder} class="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
+								{showMultigeoBuilder ? 'Скрыть' : '+ Добавить регионы'}
+							</button>
+						</div>
+
+						{#if showMultigeoBuilder}
+						<div class="space-y-2">
+							{#each multigeoRegions as region, idx}
+								<div class="flex gap-2 items-center">
+									<input type="text" bind:value={multigeoRegions[idx].region} placeholder="Регион (напр. Москва)" class="flex-1 px-2 py-1 border border-gray-300 rounded text-sm" />
+									<input type="number" bind:value={multigeoRegions[idx].percentage} min="1" max="100" placeholder="%" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm" />
+									<button type="button" onclick={() => { multigeoRegions.splice(idx, 1); multigeoRegions = [...multigeoRegions]; }} class="text-red-500 hover:text-red-700 text-sm">✕</button>
+								</div>
+							{/each}
+							<button type="button" onclick={() => { multigeoRegions.push({ region: "", percentage: 0 }); multigeoRegions = [...multigeoRegions]; }} class="text-blue-600 hover:text-blue-700 text-sm">+ Добавить регион</button>
+							{#if multigeoRegions.length > 0}
+								<p class="text-xs text-gray-500">Сумма процентов: <span class={multigeoRegions.reduce((s, r) => s + (r.percentage || 0), 0) === 100 ? "text-green-600 font-medium" : "text-red-500"}>{multigeoRegions.reduce((s, r) => s + (r.percentage || 0), 0)}% / 100%</span></p>
+							{/if}
+						</div>
+						{/if}
+					</div>
 				</form>
 
 				<div class="flex justify-end gap-3 mt-6">
@@ -775,7 +929,42 @@
 	{/if}
 
 	<!-- Group modal -->
-	{#if showGroupModal}
+	<!-- Bulk edit modal -->
+		{#if showBulkEditModal}
+			<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onmousedown={(e) => { e.target === e.currentTarget && (showBulkEditModal = false); }}>
+				<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-semibold text-gray-900">Mассовое редактирование ({selectedProjectIds.length} проектов)</h2>
+						<button onmousedown={(e) => { e.stopPropagation(); showBulkEditModal = false; }} class="text-gray-400 hover:text-gray-600">
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+						</button>
+					</div>
+
+					<form onsubmit={(e) => { e.preventDefault(); confirmBulkEdit(); }} class="space-y-4">
+						<div>
+							<label class="block text-sm font-medium text-gray-700 mb-1">Новый дневной лимит (клики/день)</label>
+							<input type="number" bind:value={bulkEditDailyLimit} min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Оставить без изменений" />
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-700 mb-1">Новый регион</label>
+							<input type="text" bind:value={bulkEditRegion} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Оставить без изменений" />
+						</div>
+						<p class="text-xs text-gray-500">Заполните хотя бы одно поле для применения изменений.</p>
+					</form>
+
+					<div class="flex justify-end gap-3 mt-6">
+						<button onmousedown={(e) => { e.stopPropagation(); showBulkEditModal = false; }} class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+							Отмена
+						</button>
+						<button type="submit" onclick={confirmBulkEdit} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+							Применить
+						</button>
+					</div>
+				</div>
+			</div>
+		{/if}
+
+		{#if showGroupModal}
 		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onmousedown={(e) => e.target === e.currentTarget && (showGroupModal = false)}>
 			<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">{editingGroup ? 'Редактировать группу' : 'Новая группа'}</h2>

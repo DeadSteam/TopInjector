@@ -244,6 +244,44 @@
 			</svg>
 		`;
 	}
+
+	// Download report helpers
+	async function downloadReport(type: string) {
+		if (!selectedProject) return;
+		try {
+			const fn = type === 'analytics' ? api.projects.reportAnalytics : api.projects.reportSummary;
+			const blob = await fn(selectedProject);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `report_${type}_${Date.now()}.csv`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (e) {
+			console.error("Export failed:", e);
+		}
+	}
+
+	async function downloadTimelineReport() {
+		if (!selectedProject) return;
+		try {
+			const response = await fetch("/api/analytics/clicks?project_id=" + encodeURIComponent(selectedProject));
+			const data = await response.json();
+			let csv = 'Date,Clicks\n';
+			for (const point of data.timeline || []) {
+				csv += `${point.date},${point.count}\n`;
+			}
+			const blob = new Blob([csv], { type: 'text/csv' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `analytics_timeline_${Date.now()}.csv`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (e) {
+			console.error("Export failed:", e);
+		}
+	}
 </script>
 
 <div class="p-6">
@@ -456,30 +494,21 @@
 	{/if}
 
 	<!-- Export buttons -->
-	<div class="flex gap-3">
+	<div class="flex gap-3 flex-wrap">
 		<button
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-			onclick={async () => {
-				try {
-					const response = await fetch(api.analytics.clicks(selectedProject).url);
-					const data = await response.json();
-					let csv = 'Date,Clicks\n';
-					for (const point of data.timeline || []) {
-						csv += `${point.date},${point.count}\n`;
-					}
-					const blob = new Blob([csv], { type: 'text/csv' });
-					const url = URL.createObjectURL(blob);
-					const a = document.createElement('a');
-					a.href = url;
-					a.download = 'analytics_report.csv';
-					a.click();
-					URL.revokeObjectURL(url);
-				} catch (e) {
-					console.error('Export failed:', e);
-				}
-			}}
-		>
-			Экспорт отчёта (CSV)
+			onclick={async () => { downloadReport('analytics'); }}>
+			Аналитика по запросам (CSV)
+		</button>
+		<button
+			class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+			onclick={async () => { downloadReport('summary'); }}>
+			Сводный отчёт (CSV)
+		</button>
+		<button
+			class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+			onclick={async () => { downloadTimelineReport(); }}>
+			График кликов (CSV)
 		</button>
 	</div>
 
