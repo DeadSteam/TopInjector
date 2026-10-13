@@ -20,6 +20,7 @@ from services.project_service.domain.models import (
     Webmarker,
     ProjectGroup,
     ProjectDelegate,
+    BalanceTransaction,
 )
 from services.project_service.repositories.project_repo import ProjectRepository
 from services.project_service.repositories.query_repo import QueryRepository
@@ -47,6 +48,16 @@ async def _task_repo(
     session: AsyncSession = Depends(get_session),
 ) -> QueueTaskRepository:
     return QueueTaskRepository(session)
+
+
+async def _get_project_or_404(
+    project_id: str,
+    project_repo: ProjectRepository = Depends(_project_repo),
+):
+    project = await project_repo.get_by_id(UUID(project_id))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
 
 
 # --------------------------------------------------------------------------- #
@@ -259,6 +270,8 @@ async def list_projects(
             "group_name": p.group.name if p.group else None,  # type: ignore[attr-defined]
             "query_count": counts_map.get(str(p.id), 0),
             "is_delegate": str(p.id) in delegated_ids,
+            "balance_credits": getattr(p, "balance_credits", 0),
+            "balance_rub": (getattr(p, "balance_credits", 0) / 100) if hasattr(p, "balance_credits") else 0,
         }
         for p in projects
     ],
@@ -291,6 +304,8 @@ async def get_project(
         "integrations": project.integrations or {},
         "scheduling_window": project.scheduling_window,
         "query_modifications": project.query_modifications or {},
+        "balance_credits": getattr(project, "balance_credits", 0),
+        "balance_rub": (getattr(project, "balance_credits", 0) / 100) if hasattr(project, "balance_credits") else 0,
     }
 
 
@@ -1290,8 +1305,9 @@ async def get_project_clicks(
     date_str: str | None = Query(default=None),
     source: str | None = Query(default=None),
     geo: str | None = Query(default=None),
+    suggestion_mode: str | None = Query(default=None, alias="suggestion_mode"),
 ):
-    """Return click events for a project with geo/source/position breakdown."""
+    """Return click events for a project with geo/source/position/suggestion breakdown."""
     from datetime import datetime as _dt
 
     query = select(QueueTask).where(QueueTask.project_id == UUID(project_id))
@@ -1315,8 +1331,41 @@ async def get_project_clicks(
     if source:
         query = query.where(QueueTask.source == source)  # type: ignore[assignment]
 
+    if geo:
+        # Client sends a search term; filter by task.geo containing it
+        geo_lower = geo.lower()
+        # Use JSON contains check — task.geo is JSONB/JSON dict
+        from sqlalchemy import cast as _cast, String as _String
+        query = query.where(QueueTask.geo.op('->>')(geo.split(':')[0] if ':' in geo else 'country') >= '')  # placeholder, fetch all and filter below
+
     result = await session.execute(query.order_by(QueueTask.created_at.desc().nullslast()))
-    tasks = result.scalars().all()
+    tasks_result = result.scalars().all()
+
+    # Client-side filtering for geo substring and suggestion_mode (cannot be done purely in SQL efficiently)
+    filtered_tasks = []
+    for t in tasks_result:
+        # Geo filter — check if any geo value contains the search term
+        if geo:
+            geo_val = t.geo or {}
+            geo_str = _json.dumps(geo_val, ensure_ascii=False).lower()
+            if geo_lower not in geo_str:
+                continue
+
+        # Suggestion mode filter — need to look up query.suggestions
+        if suggestion_mode and suggestion_mode != "all" and t.query_id:
+            try:
+                q_row = await session.execute(
+                    select(_QueryModel.suggestions).where(_QueryModel.id == t.query_id)
+                )
+                suggestions = q_row.scalar_one_or_none() or {}
+                if suggestion_mode == "without" and suggestions:
+                    continue
+                if suggestion_mode == "with" and not suggestions:
+                    continue
+            except Exception:
+                pass
+
+        filtered_tasks.append(t)
 
     return [
         {
@@ -1328,7 +1377,7 @@ async def get_project_clicks(
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "geo": t.geo or {},
         }
-        for t in tasks
+        for t in filtered_tasks
     ]
 
 
@@ -1843,3 +1892,134 @@ async def export_summary_report(
         },
         media_type="text/csv",
     )
+
+
+# --- Balance ---------------------------------------------------------------- #
+
+@router.get("/{id}/balance")
+async def get_project_balance(
+    id: UUID,
+    project = Depends(_get_project_or_404),  # type: ignore[name-defined]
+):
+    """Get current project balance."""
+    return {
+        "project_id": str(project.id),
+        "balance": project.balance_credits,
+        "balance_rub": project.balance_credits / 100,
+    }
+
+
+@router.post("/{id}/balance/add")
+async def add_project_balance(
+    id: UUID,
+    body: dict,
+    project = Depends(_get_project_or_404),  # type: ignore[name-defined]
+    session: AsyncSession = Depends(get_session),
+):
+    """Add credits to a project balance."""
+    amount_kopeks = int(body.get("amount", 0) * 100)
+    description = body.get("description", "")
+
+    if amount_kopeks <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+
+    # Update project balance
+    project.balance_credits += amount_kopeks
+
+    # Create transaction record
+    txn = BalanceTransaction(
+        id=uuid4(),
+        project_id=id,
+        amount=amount_kopeks,
+        description=description,
+        type="add",
+    )
+    session.add(txn)
+    await session.commit()
+    await session.refresh(project)
+
+    return {
+        "project_id": str(project.id),
+        "balance": project.balance_credits,
+        "balance_rub": project.balance_credits / 100,
+        "added": amount_kopeks / 100,
+        "transaction_id": str(txn.id),
+    }
+
+
+@router.post("/{id}/balance/set")
+async def set_project_balance(
+    id: UUID,
+    body: dict,
+    project = Depends(_get_project_or_404),  # type: ignore[name-defined]
+    session: AsyncSession = Depends(get_session),
+):
+    """Set project balance to a specific value."""
+    new_balance_kopeks = int(body.get("balance", 0) * 100)
+    diff = new_balance_kopeks - project.balance_credits
+    description = body.get("description", "Баланс установлен вручную")
+
+    if diff != 0:
+        txn = BalanceTransaction(
+            id=uuid4(),
+            project_id=id,
+            amount=diff,
+            description=f"{description} (установка баланса)",
+            type="set",
+        )
+        session.add(txn)
+
+    project.balance_credits = new_balance_kopeks
+    await session.commit()
+
+    return {
+        "project_id": str(project.id),
+        "balance": project.balance_credits,
+        "balance_rub": project.balance_credits / 100,
+    }
+
+
+@router.get("/{id}/balance/history")
+async def get_balance_history(
+    id: UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    project = Depends(_get_project_or_404),  # type: ignore[name-defined]
+    session: AsyncSession = Depends(get_session),
+):
+    """Get balance transaction history for a project."""
+    offset = (page - 1) * page_size
+
+    # Count total
+    count_query = select(func.count()).select_from(BalanceTransaction).where(
+        BalanceTransaction.project_id == id
+    )
+    total = await session.scalar(count_query)
+
+    # Get transactions
+    txn_query = (
+        select(BalanceTransaction)
+        .where(BalanceTransaction.project_id == id)
+        .order_by(BalanceTransaction.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    result = await session.execute(txn_query)
+    txns = result.scalars().all()
+
+    return {
+        "project_id": str(project.id),
+        "transactions": [{
+            "id": str(t.id),
+            "amount_kopeks": t.amount,
+            "amount_rub": t.amount / 100,
+            "type": t.type,
+            "description": t.description or "",
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        } for t in txns],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+

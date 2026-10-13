@@ -1655,8 +1655,14 @@
 			<option value="autoburst">Autoburst</option>
 			<option value="proklik">Proklik</option>
 		</select>
+		<label class="text-xs text-gray-500 whitespace-nowrap">Подсказки:</label>
+		<select bind:value={drillSuggestionMode} onchange={() => openDailyDrillDown(drillDate)} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none">
+			<option value="all">Все</option>
+			<option value="without">Без подсказок</option>
+			<option value="with">Только с подсказками</option>
+		</select>
 		<label class="text-xs text-gray-500 whitespace-nowrap">Geo (поиск):</label>
-		<input type="text" bind:value={drillFilterGeo} placeholder="страна, город..." oninput={() => { clearTimeout((this as any)._t); (this as any)._t = setTimeout(() => openDailyDrillDown(drillDate), 300); }} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none w-40" />
+		<input type="text" bind:value={drillFilterGeo} placeholder="страна, город..." oninput={() => { clearTimeout((this as any)._t); (this as any)._t = setTimeout(() => openDailyDrillDown(drillDate), 300); }} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none w-44" />
 		<button onclick={resetDrillFilters} class="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-200 transition-colors ml-auto">
 			Сбросить
 		</button>

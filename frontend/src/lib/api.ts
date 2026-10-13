@@ -182,12 +182,14 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/copy`, { method: "POST", body: JSON.stringify(data) }),
 		clearQueue: (projectId: string, data: any) =>
 			fetcher(`/api/projects/${projectId}/clear-queue`, { method: "POST", body: JSON.stringify(data) }),
-		getClicks: (projectId: string, params?: { date_str?: string; source?: string; geo?: string }) => {
+		getClicks: (projectId: string, params?: { date_str?: string; source?: string; geo?: string; suggestion_mode?: string }) => {
 			let path = `/api/projects/${projectId}/clicks`;
 			if (params) {
 				const qs = new URLSearchParams();
 				if (params.date_str) qs.set("date_str", params.date_str);
 				if (params.source) qs.set("source", params.source);
+				if (params.geo) qs.set("geo", params.geo);
+				if (params.suggestion_mode) qs.set("suggestion_mode", params.suggestion_mode);
 				path += "?" + qs.toString();
 			}
 			return fetcher(path);
@@ -228,6 +230,15 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/auto-stop`, { method: "PUT", body: JSON.stringify(data) }),
 		getAutoStop: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/auto-stop`),
+	},
+	balance: {
+		get: (projectId: string) => fetcher(`/api/projects/${projectId}/balance`),
+		add: (projectId: string, data: { amount: number; description?: string }) =>
+			fetcher(`/api/projects/${projectId}/balance/add`, { method: "POST", body: JSON.stringify(data) }),
+		set: (projectId: string, data: { balance: number }) =>
+			fetcher(`/api/projects/${projectId}/balance/set`, { method: "POST", body: JSON.stringify(data) }),
+		history: (projectId: string, page: number = 1, pageSize: number = 20) =>
+			fetcher(`/api/projects/${projectId}/balance/history?page=${page}&page_size=${pageSize}`),
 	},
 	groups: {
 		list: () => fetcher("/api/projects/groups"),
