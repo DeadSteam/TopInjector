@@ -33,6 +33,10 @@
 	let trendLines = $state<any[]>([]);
 	let showChart = $state(true);
 	let chartHoverQuery = $state<string | null>(null);
+	let visibleTrendQueries = $state<Set<string>>(new Set());
+
+	// Filtered visible trend lines
+	const visibleTrendLines = $derived(trendLines.filter((l: any) => visibleTrendQueries.has(l.text)));
 
 	// Request table stats
 	let requestTableData = $state<any[]>([]);
@@ -105,6 +109,43 @@
 	let settingsSaving = $state(false);
 	let settingsSaved = $state(false);
 
+	// Auto-stop state
+	let autoStopDate = $state<string>("");
+	let autoStopLoading = $state(false);
+	let autoStopSet = $state(false);
+	let autoStopCancelling = $state(false);
+	async function loadAutoStop() {
+		try {
+			const data = await api.projects.getAutoStop(projectId);
+			autoStopDate = data.auto_stop_at || "";
+			autoStopSet = !!data.auto_stop_at;
+		} catch {}
+	}
+	async function saveAutoStop() {
+		autoStopLoading = true;
+		try {
+			const payload: any = {};
+			if (autoStopDate) {
+				payload.auto_stop_at = autoStopDate;
+			} else {
+				payload.auto_stop_at = null;
+			}
+			await api.projects.autoStop(projectId, payload);
+			autoStopSet = !!autoStopDate;
+			autoStopSet && loadAutoStop();
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка авто-останова"; }
+		autoStopLoading = false;
+	}
+	async function cancelAutoStop() {
+		autoStopCancelling = true;
+		try {
+			await api.projects.autoStop(projectId, { auto_stop_at: null });
+			autoStopDate = "";
+			autoStopSet = false;
+		} catch (err) { error = err instanceof Error ? err.message : "Ошибка отмены авто-останова"; }
+		autoStopCancelling = false;
+	}
+
 	// Bulk edit modal
 	let showBulkEdit = $state(false);
 	let bulkEditGeoJson = $state("");
@@ -123,6 +164,9 @@
 	let drillDate = $state("");
 	let drillClicks: any[] = [];
 	let drillLoading = $state(false);
+	let drillFilterSource = $state("all");
+	let drillFilterGeo = $state("");
+	let drillSuggestionMode = $state("all");
 
 	// Copy project modal state
 	let copyProjectName = $state("");
@@ -209,7 +253,21 @@
 		try {
 			const data = await api.projects.trend(projectId);
 			trendLines = data.lines || [];
+			if (trendLines.length > 0 && visibleTrendQueries.size === 0) {
+				visibleTrendQueries = new Set(trendLines.map((l: any) => l.text));
+			}
 		} catch { trendLines = []; }
+	}
+
+	function toggleTrendQuery(text: string) {
+		if (visibleTrendQueries.has(text)) visibleTrendQueries.delete(text);
+		else visibleTrendQueries.add(text);
+		visibleTrendQueries = new Set(visibleTrendQueries);
+	}
+
+	function showAllTrendQueries() {
+		visibleTrendQueries = new Set(trendLines.map((l: any) => l.text));
+		visibleTrendQueries = new Set(visibleTrendQueries);
 	}
 
 	async function loadRequestTable() {
@@ -341,18 +399,32 @@
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка очистки очереди"; }
 	}
 
-	async function openDailyDrillDown(dateStr: string) {
+	async function openDailyDrillDown(dateStr: string, source: string = "all", geo: string = "", suggestion_mode: string = "all") {
 		drillDate = dateStr;
 		showDrillDown = true;
 		drillLoading = true;
 		drillClicks = [];
+		drillFilterSource = source;
+		drillFilterGeo = geo;
+		drillSuggestionMode = suggestion_mode;
 		try {
-			drillClicks = await api.projects.getClicks(projectId, { date_str: dateStr });
+			const params: any = { date_str: dateStr };
+			if (source && source !== "all") params.source = source;
+			if (geo) params.geo = geo;
+			if (suggestion_mode && suggestion_mode !== "all") params.suggestion_mode = suggestion_mode;
+			drillClicks = await api.projects.getClicks(projectId, params);
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки кликов";
 		} finally {
 			drillLoading = false;
 		}
+	}
+
+	function resetDrillFilters() {
+		drillFilterSource = "all";
+		drillFilterGeo = "";
+		drillSuggestionMode = "all";
+		if (drillDate) openDailyDrillDown(drillDate);
 	}
 
 	async function openTaskDetail(taskId: string) {
@@ -625,6 +697,7 @@
 			settingModsTypos = !!qm.typos;
 			settingModsTrailingSpace = !!qm.trailing_space;
 			settingsSaved = false;
+			loadAutoStop();
 		}
 		startAutoRefresh();
 	}
@@ -720,7 +793,7 @@
 						{#if project.group_name}
 							<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-50 text-blue-700 border border-blue-200">
 								{#const gIcon = getGroupIcon(project.group_id)}
-								{#if gIcon && renderGroupIconPath(gIcon)}
+								{#if gIcon}
 									<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderGroupIconPath(gIcon)}"/></svg>
 								{/if}
 								<a href={groupLink(project.group_id)} class="hover:underline">{project.group_name}</a>
@@ -1117,6 +1190,16 @@
 		{:else if showChart && trendLines.length > 0}
 			<!-- SVG Position Trend Chart -->
 			<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+				<!-- Query filter buttons -->
+				<div class="flex flex-wrap gap-1.5 mb-3">
+					<button onclick={showAllTrendQueries} class="px-2 py-1 text-[10px] border border-gray-300 rounded hover:bg-gray-50 transition-colors">Все</button>
+					{#each trendLines as line}
+						<button onclick={() => toggleTrendQuery(line.text)} class={`px-2 py-1 text-[10px] rounded transition-colors ${visibleTrendQueries.has(line.text) ? 'bg-blue-600 text-white' : 'border border-gray-300 bg-white'}`}>
+							{line.text.length > 20 ? line.text.slice(0, 20) + '…' : line.text}
+						</button>
+					{/each}
+				</div>
+
 				<svg viewBox="0 0 {getChartDims().containerW} {getChartDims().containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
 					{#const dims = getChartDims()}
 					<!-- Grid lines (horizontal) -->
@@ -1125,57 +1208,61 @@
 					{/for}
 
 					<!-- Axis labels -->
-					<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...trendLines[0].data.map((d: any) => d.position)) || 1)}</text>
-					<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
+					{#if visibleTrendLines[0]?.data?.length > 0}
+						<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...visibleTrendLines[0].data.map((d: any) => d.position)) || 1)}</text>
+						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
 
-					<!-- X-axis date labels -->
-					{#if trendLines[0]?.data?.length > 0}
-						{#for (let i = 0; i < trendLines[0].data.length; i += Math.max(1, Math.floor(trendLines[0].data.length / 6)))}
-							<text x={dims.marginL + (i / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(trendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
+						<!-- X-axis date labels -->
+						{#for (let i = 0; i < visibleTrendLines[0].data.length; i += Math.max(1, Math.floor(visibleTrendLines[0].data.length / 6)))}
+							<text x={dims.marginL + (i / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(visibleTrendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
 						{/for}
-					{/if}
 
-					<!-- Trend lines -->
-					{#each trendLines as line}
-						<text x={dims.marginL - 8} y={dims.marginT + 4 + trendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
-					{/each}
+						<!-- Trend line names -->
+						{#each visibleTrendLines as line}
+							<text x={dims.marginL - 8} y={dims.marginT + 4 + visibleTrendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
+						{/each}
 
-					<!-- Paths -->
-					<path d="{buildChartPath(trendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
+						<!-- Paths -->
+						<path d="{buildChartPath(visibleTrendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
 
-					<!-- Hover line and tooltip -->
-					{#if hoverDate && trendLines[0]?.data?.length > 0}
-						{#const hoverIdx = trendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
-						{#if hoverIdx >= 0}
-							<line x1={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (trendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
+						<!-- Hover line and tooltip -->
+						{#if hoverDate && visibleTrendLines[0]?.data?.length > 0}
+							{#const hoverIdx = visibleTrendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
+							{#if hoverIdx >= 0}
+								<line x1={dims.marginL + (hoverIdx / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
+							{/if}
 						{/if}
+
+					{:else}
+						<text x="{dims.marginL + dims.innerW / 2}" y="{dims.marginT + dims.innerH / 2}" text-anchor="middle" fill="#94a3b8" font-size="11">Выберите запросы для отображения</text>
 					{/if}
-				
 				</svg>
 
-				<!-- Legend -->
-				<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
-					{#each trendLines as line}
-						<button onclick={() => { chartHoverQuery = chartHoverQuery === line.text ? null : line.text; }} class="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity" onmouseleave={() => { chartHoverQuery = null; }}>
-							<span class="w-2 h-2 rounded-full bg-blue-500"></span>
-							<span class="text-gray-600 truncate max-w-[120px]">{line.text}</span>
-						</button>
-					{/each}
-				</div>
-
-				{#if hoverDate && trendLines.length > 0}
-					<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
-						<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
-						{#each trendLines as line}
-							{#const d = line.data.find((p: any) => p.date === hoverDate)}
-							{#if d}
-								<div class="flex justify-between gap-4">
-									<span class="text-gray-500 truncate">{line.text}</span>
-									<span class="font-mono font-medium text-blue-600">#{d.position}</span>
-								</div>
-							{/if}
+				<!-- Legend with toggles -->
+				{#if visibleTrendLines.length > 0}
+					<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+						{#each visibleTrendLines as line}
+							<span class="flex items-center gap-1.5 text-xs text-gray-600">
+								<span class="w-2 h-2 rounded-full bg-blue-500"></span>
+								<span class="truncate max-w-[120px]">{line.text}</span>
+							</span>
 						{/each}
 					</div>
+
+					{#if hoverDate && visibleTrendLines.length > 0}
+						<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+							<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
+							{#each visibleTrendLines as line}
+								{#const d = line.data.find((p: any) => p.date === hoverDate)}
+								{#if d}
+									<div class="flex justify-between gap-4">
+										<span class="text-gray-500 truncate">{line.text}</span>
+										<span class="font-mono font-medium text-blue-600">#{d.position}</span>
+									</div>
+								{/if}
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			</div>
 
@@ -1431,6 +1518,28 @@
 					</div>
 				</div>
 
+				<!-- Auto-stop -->
+				<div class="border-t border-gray-200 pt-6 mt-6">
+					<h4 class="text-sm font-semibold text-gray-900 mb-1">Авто-останов проекта</h4>
+					<p class="text-xs text-gray-500 mb-3">Установите дату, после которой проект автоматически остановится и новые задачи не будут создаваться.</p>
+
+					{#if autoStopSet}
+						<div class="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+							<p class="text-amber-800 font-medium">Проект будет остановлен: {autoStopDate || 'сразу'}</p>
+						</div>
+						<button onclick={cancelAutoStop} disabled={autoStopCancelling} class="px-3 py-1.5 border border-red-300 text-red-600 hover:bg-red-50 rounded-lg text-xs font-medium transition-colors">
+							{autoStopCancelling ? 'Отмена…' : 'Отменить авто-останов'}
+						</button>
+					{:else}
+						<div class="flex items-center gap-3">
+							<input type="datetime-local" bind:value={autoStopDate} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+							<button onclick={saveAutoStop} disabled={autoStopLoading} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-xs font-medium transition-colors">
+								{autoStopLoading ? 'Сохранение…' : 'Установить'}
+							</button>
+						</div>
+					{/if}
+				</div>
+
 				<button onclick={saveProjectSettings} disabled={settingsSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">
 					{settingsSaving ? 'Сохранение…' : 'Сохранить настройки'}
 				</button>
@@ -1537,7 +1646,22 @@
 		<h3 class="text-lg font-semibold text-gray-900">&#1040;&#1083;&#1086;&#1090;&#1077;&#1083;&#1103; &#1087;&#1088;&#1080; {drillDate}</h3>
 		<button onclick={() => showDrillDown = false} class="text-gray-400 hover:text-gray-600">&times;</button>
 	</div>
-	<div class="p-4 overflow-y-auto max-h-[calc(90vh-80px)]">
+	<!-- Filter bar -->
+	<div class="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-wrap items-center gap-3">
+		<label class="text-xs text-gray-500 whitespace-nowrap">Источник:</label>
+		<select bind:value={drillFilterSource} onchange={() => openDailyDrillDown(drillDate)} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none">
+			<option value="all">Все</option>
+			<option value="strategy">Strategy</option>
+			<option value="autoburst">Autoburst</option>
+			<option value="proklik">Proklik</option>
+		</select>
+		<label class="text-xs text-gray-500 whitespace-nowrap">Geo (поиск):</label>
+		<input type="text" bind:value={drillFilterGeo} placeholder="страна, город..." oninput={() => { clearTimeout((this as any)._t); (this as any)._t = setTimeout(() => openDailyDrillDown(drillDate), 300); }} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none w-40" />
+		<button onclick={resetDrillFilters} class="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-200 transition-colors ml-auto">
+			Сбросить
+		</button>
+	</div>
+	<div class="p-4 overflow-y-auto max-h-[calc(90vh-160px)]">
 		{#if drillLoading}
 			<p class="text-sm text-gray-500 text-center py-8">&#1053;&#1072; &#1085;&#1072;&#1089;&#1097;&#1072;&#1085;&#1080;&#1077;...</p>
 		{:else}
