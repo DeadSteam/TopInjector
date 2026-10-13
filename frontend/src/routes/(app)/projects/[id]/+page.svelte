@@ -686,6 +686,25 @@
 		if (!groupId) return null;
 		return `/projects?group_id=${groupId}`;
 	}
+
+	function getGroupIcon(groupId: string | undefined | null): string | null {
+		if (!groupId) return null;
+		const g = groups.find(gr => gr.id === groupId);
+		return g?.icon || null;
+	}
+
+	const GROUP_ICON_PATHS: Record<string, string> = {
+		folder: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
+		briefcase: 'M20 6h-4V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zM10 4v2h4V4h-4z',
+		building: 'M3 21l18 0M9 8l0 13M15 8l0 13M5 8l0 13M3 4l18 0M5 4l0 4M19 4l0 4M9 4l0 4M15 4l0 4',
+		users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+		star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
+		target: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+	};
+
+	function renderGroupIconPath(name: string): string | null {
+		return GROUP_ICON_PATHS[name] || null;
+	}
 </script>
 
 <div class="p-6">
@@ -699,7 +718,11 @@
 					<div class="flex items-center gap-3">
 						<h1 class="text-xl font-bold text-gray-900">{project.name}</h1>
 						{#if project.group_name}
-							<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-blue-50 text-blue-700 border border-blue-200">
+							<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-50 text-blue-700 border border-blue-200">
+								{#const gIcon = getGroupIcon(project.group_id)}
+								{#if gIcon && renderGroupIconPath(gIcon)}
+									<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderGroupIconPath(gIcon)}"/></svg>
+								{/if}
 								<a href={groupLink(project.group_id)} class="hover:underline">{project.group_name}</a>
 							</span>
 						{/if}

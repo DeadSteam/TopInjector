@@ -93,7 +93,69 @@
 	let createFormModsTypos = $state(false);
 	let createFormModsTrailingSpace = $state(false);
 	let groupName = $state("");
-	let groupIcon = $state("");
+	let selectedGroupIcon = $state("");
+
+	// Lucide-style icon definitions for group picker
+	const GROUP_ICONS = [
+		{ name: "folder", label: "Папка" },
+		{ name: "briefcase", label: "Портфель" },
+		{ name: "building", label: "Офис" },
+		{ name: "users", label: "Команда" },
+		{ name: "star", label: "Избранное" },
+		{ name: "target", label: "Цель" },
+		{ name: "rocket", label: "Запуск" },
+		{ name: "globe", label: "Глобал" },
+		{ name: "shield", label: "Щит" },
+		{ name: "crown", label: "Корона" },
+		{ name: "gem", label: "Алмаз" },
+		{ name: "zap", label: "Молния" },
+		{ name: "flame", label: "Пламя" },
+		{ name: "trending-up", label: "Рост" },
+		{ name: "search", label: "Поиск" },
+		{ name: "tag", label: "Тег" },
+		{ name: "box", label: "Коробка" },
+		{ name: "layers", label: "Слои" },
+		{ name: "grid", label: "Сетка" },
+		{ name: "layout", label: "Макет" },
+		{ name: "map-pin", label: "Локация" },
+		{ name: "book-open", label: "Книга" },
+		{ name: "code", label: "Код" },
+		{ name: "cpu", label: "Процессор" },
+	];
+
+	function renderIconPath(name: string): string {
+		const paths: Record<string, string> = {
+			folder: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
+			briefcase: 'M20 6h-4V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zM10 4v2h4V4h-4z',
+			building: 'M3 21l18 0M9 8l0 13M15 8l0 13M5 8l0 13M3 4l18 0M5 4l0 4M19 4l0 4M9 4l0 4M15 4l0 4',
+			users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+			star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
+			target: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+			rocket: 'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.25 22.25 0 0 1-3.95 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
+			globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
+			shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+			crown: 'M2 20h20L19 8l-5 6-2-8-5 6L2 8l0 12zM7 20h10',
+			gem: 'M6 3h12l4 6-10 13L2 9z',
+			zap: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z',
+			flame: 'M12 12c2-2.96 0-7-4-7S5 7.96 5 12c0 5.5 3.5 8 7 10 3.5-2 7-4.5 7-10 0-2.96-1-5-4-5s-3 2-3 5zM9 12c0 2.5 2 5 3 7 1-2 3-4.5 3-7 0-1.5-.5-3-3-3S9 10.5 9 12z',
+			'trending-up': 'M23 6l-9.5 9.5-5-5L1 18',
+			search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.35-4.35',
+			tag: 'M3 4v16a1 1 0 0 0 1 1h16a1 1 0 0 0 .7-.3l5-5a1 1 0 0 0 0-1.4l-7-7A1 1 0 0 0 16 2H4a1 1 0 0 0-1 1zM7 7h.01',
+			box: 'M21 16V8a2 2 0 0 0-1-1.73l-10-5.41a2 2 0 0 0-2 0L3 6.27A2 2 0 0 0 2 8v8a2 2 0 0 0 1 1.73l10 5.41a2 2 0 0 0 2 0l10-5.41A2 2 0 0 0 21 16zM12 3.85L2 8.85M12 8.85L2 13.85M12 8.85l10 5zM12 8.85L22 13.85',
+			layers: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+			grid: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
+			layout: 'M3 3h18M3 9h18M3 15h18M3 21h18M9 3v18M15 3v18',
+			'map-pin': 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zM12 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+			'book-open': 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z',
+			code: 'M16 18l6-6-6-6M8 6l-6 6 6 6',
+			cpu: 'M6 8a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8zM16 8a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V8zM8 16a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-2zM16 16a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-2z',
+		};
+		return paths[name] || '';
+	}
+
+	function hasIcon(name: string): boolean {
+		return !!renderIconPath(name);
+	}
 
 	// Context menu
 	let contextMenu = $state<{ x: number; y: number; projectId: string } | null>(null);
@@ -457,12 +519,12 @@
 		if (!groupName.trim()) return;
 		try {
 			if (editingGroup) {
-				await api.groups.update(editingGroup.id, { name: groupName, icon: groupIcon });
+				await api.groups.update(editingGroup.id, { name: groupName, icon: selectedGroupIcon });
 			} else {
-				await api.groups.create({ name: groupName, icon: groupIcon || "" });
+				await api.groups.create({ name: groupName, icon: selectedGroupIcon || "" });
 			}
 			showGroupModal = false;
-			groupName = ""; groupIcon = ""; editingGroup = null;
+			groupName = ""; selectedGroupIcon = ""; editingGroup = null;
 			await loadGroups();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка группы";
@@ -481,14 +543,14 @@
 
 	function openNewGroup() {
 		editingGroup = null;
-		groupName = ""; groupIcon = "";
+		groupName = ""; selectedGroupIcon = "";
 		showGroupModal = true;
 	}
 
 	function editGroup(group: ProjectGroup) {
 		editingGroup = group;
 		groupName = group.name;
-		groupIcon = group.icon || "";
+		selectedGroupIcon = group.icon || "";
 		showGroupModal = true;
 	}
 
@@ -990,10 +1052,27 @@
 			<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">{editingGroup ? 'Редактировать группу' : 'Новая группа'}</h2>
 
-				<form onsubmit={(e) => { e.preventDefault(); saveGroup(); }} class="space-y-4">
+				<form id="groupForm" onsubmit={(e) => { e.preventDefault(); saveGroup(); }} class="space-y-4">
 					<div>
 						<label class="block text-sm font-medium text-gray-700 mb-1">Название</label>
 						<input type="text" bind:value={groupName} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Мои клиенты" required />
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Иконка группы</label>
+						{#if selectedGroupIcon && hasIcon(selectedGroupIcon)}
+						<div class="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg mb-3">
+							<svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderIconPath(selectedGroupIcon)}"/></svg>
+							<span class="text-sm text-blue-800 font-medium">{GROUP_ICONS.find(i => i.name === selectedGroupIcon)?.label}</span>
+						</div>
+						{/if}
+						<div class="grid grid-cols-6 gap-2 max-h-48 overflow-y-auto p-1">
+							{#each GROUP_ICONS as icon}
+							<button type="button" onclick={() => selectedGroupIcon = icon.name} class="flex flex-col items-center gap-1 p-2 rounded-lg border transition-colors {selectedGroupIcon === icon.name ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:border-gray-300 text-gray-500 hover:text-gray-700'}">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderIconPath(icon.name)}"/></svg>
+							</button>
+							{/each}
+						</div>
 					</div>
 				</form>
 
@@ -1023,7 +1102,10 @@
 			<div class="flex flex-wrap gap-2">
 				{#each groups as group}
 					<div class="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg">
-						<span class="text-sm font-medium text-gray-900">{group.name}</span>
+						{#if group.icon && hasIcon(group.icon)}
+							<svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderIconPath(group.icon)}"/></svg>
+						{/if}
+						<a href="/?group_id={group.id}" class="text-sm font-medium text-gray-900 hover:text-blue-600 transition-colors">{group.name}</a>
 						<button onclick={() => editGroup(group)} class="text-gray-400 hover:text-gray-600 text-xs">✏️</button>
 						<button onclick={() => deleteGroup(group.id)} class="text-gray-400 hover:text-red-600 text-xs">×</button>
 					</div>
