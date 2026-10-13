@@ -22,6 +22,7 @@ from services.project_service.domain.models import (
     ProjectDelegate,
     BalanceTransaction,
 )
+from services.project_service.domain.audit_log import AuditLogEntry
 from services.project_service.repositories.project_repo import ProjectRepository
 from services.project_service.repositories.query_repo import QueryRepository
 from services.queue_service.domain.models import QueueTask
@@ -149,6 +150,7 @@ async def delete_group(
 async def create_project(
     body: dict,
     project_repo: ProjectRepository = Depends(_project_repo),
+    session: AsyncSession = Depends(get_session),
 ):
     """Create a new project."""
     user_id_raw = body.get("user_id")
@@ -183,6 +185,19 @@ async def create_project(
         query_modifications=body.get("query_modifications", {}),
     )
     project = await project_repo.create(project)
+
+    # Record audit log entry
+    try:
+        await record_audit_entry(
+            session,
+            project_id=project.id,
+            user_id=user_id,
+            action="create_project",
+            new_values={"name": body["name"], "domain": body["domain"]},
+        )
+    except Exception:
+        pass
+
     return {"id": str(project.id), "name": project.name, "domain": project.domain}
 
 
@@ -314,14 +329,39 @@ async def update_project(
     project_id: str,
     body: dict,
     project_repo: ProjectRepository = Depends(_project_repo),
+    session: AsyncSession = Depends(get_session),
 ):
     """Update an existing project."""
     project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Capture old values for audit log
+    old_values = {
+        "name": project.name,
+        "domain": project.domain,
+        "region": project.region,
+        "strategy_type": project.strategy_type,
+    }
+
     for key, value in body.items():
         if hasattr(project, key) and key not in ("id", "created_at", "updated_at"):
             setattr(project, key, value)
+
+    # Record audit log entry
+    try:
+        new_values = {k: v for k, v in body.items() if k in old_values}
+        await record_audit_entry(
+            session,
+            project_id=UUID(project_id),
+            user_id=project.user_id,
+            action="update_project",
+            old_values=old_values,
+            new_values=new_values,
+        )
+    except Exception:
+        pass
+
     return {"id": str(project.id), "updated": True}
 
 
@@ -329,11 +369,25 @@ async def update_project(
 async def delete_project(
     project_id: str,
     project_repo: ProjectRepository = Depends(_project_repo),
+    session: AsyncSession = Depends(get_session),
 ):
     """Delete a project."""
     project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Record audit log entry before deletion
+    try:
+        await record_audit_entry(
+            session,
+            project_id=UUID(project_id),
+            user_id=project.user_id,
+            action="delete_project",
+            old_values={"name": project.name, "domain": project.domain},
+        )
+    except Exception:
+        pass
+
     await project_repo.delete(project)
     return {"deleted": True}
 
@@ -1293,6 +1347,22 @@ async def clear_queue(
         )
     )
     remaining = count_result.scalar() or 0
+
+    # Record audit log entry
+    try:
+        proj = await session.execute(select(Project).where(Project.id == UUID(project_id)))
+        project_row = proj.scalar_one_or_none()
+        await record_audit_entry(
+            session,
+            project_id=UUID(project_id),
+            user_id=None,  # clear_queue is admin action; user_id from auth middleware
+            action="clear_queue",
+            details=f"Cleared statuses: {', '.join(target_statuses)}",
+            new_values={"remaining": remaining},
+        )
+    except Exception:
+        pass  # audit failure should not break the operation
+
     return {"cleared": True, "remaining": remaining}
 
 
@@ -1379,6 +1449,81 @@ async def get_project_clicks(
         }
         for t in filtered_tasks
     ]
+
+
+# --- Audit Log ---------------------------------------------------------------- #
+
+
+@router.get("/{project_id}/audit-log")
+async def get_project_audit_log(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    action: str | None = Query(default=None),
+):
+    """Return audit log entries for a project with pagination."""
+    from sqlalchemy import func as _func
+
+    pid = UUID(project_id)
+    base_query = select(AuditLogEntry).where(
+        AuditLogEntry.project_id == pid,
+    )
+    if action:
+        base_query = base_query.where(AuditLogEntry.action == action)
+
+    total_result = await session.execute(select(_func.count()).select_from(base_query.subquery()))
+    total = total_result.scalar() or 0
+
+    paginated_query = (
+        base_query
+        .order_by(AuditLogEntry.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await session.execute(paginated_query)
+    entries = result.scalars().all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "entries": [
+            {
+                "id": str(e.id),
+                "action": e.action,
+                "actor_user_id": str(e.actor_user_id) if e.actor_user_id else None,
+                "old_values": e.old_values,
+                "new_values": e.new_values,
+                "details": e.details,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entries
+        ],
+    }
+
+
+async def record_audit_entry(
+    session: AsyncSession,
+    project_id: UUID,
+    user_id: UUID | None,
+    action: str,
+    old_values: dict | None = None,
+    new_values: dict | None = None,
+    details: str | None = None,
+) -> None:
+    """Helper to insert an audit log entry."""
+    entry = AuditLogEntry(
+        project_id=project_id,
+        user_id=user_id,
+        action=action,
+        actor_user_id=user_id,
+        old_values=old_values,
+        new_values=new_values,
+        details=details,
+    )
+    session.add(entry)
+    await session.commit()
 
 
 # --- Global Search ------------------------------------------------------------ #

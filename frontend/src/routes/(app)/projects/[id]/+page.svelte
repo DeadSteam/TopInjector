@@ -178,6 +178,13 @@
 	let proklikMode = $state<"all" | "selected">("all");
 	let proklikLoading = $state(false);
 
+	// Audit log state
+	let auditEntries: any[] = [];
+	let auditLoading = $state(false);
+	let auditPage = $state(1);
+	let auditTotal = $state(0);
+	let auditTotalPages = $state(1);
+
 	// Selection
 	let selectedQueryIds = new Set<string>();
 
@@ -488,6 +495,33 @@
 		proklikLoading = false;
 	}
 
+	async function loadAuditLog() {
+		auditLoading = true;
+		try {
+			const data = await api.projects.getAuditLog(projectId, auditPage, 20);
+			auditEntries = data.entries || [];
+			auditTotal = data.total || 0;
+			auditTotalPages = Math.ceil(auditTotal / 20) || 1;
+			auditPage = data.page || 1;
+		} catch {
+			auditEntries = [];
+		} finally {
+			auditLoading = false;
+		}
+	}
+
+	function auditActionLabel(action: string): string {
+		const labels: Record<string, string> = {
+			create_project: 'Создание проекта',
+			update_project: 'Обновление',
+			delete_project: 'Удаление',
+			clear_queue: 'Очистка очереди',
+			add_delegate: 'Добавлен делегат',
+			remove_delegate: 'Удалён делегат',
+		};
+		return labels[action] || action;
+	}
+
 	function toggleSelect(queryId: string) {
 		if (selectedQueryIds.has(queryId)) selectedQueryIds.delete(queryId);
 		else selectedQueryIds.add(queryId);
@@ -740,6 +774,7 @@
 		{ key: "markers", label: "Маркеры" },
 		{ key: "webmaster", label: "ВебМастер" },
 		{ key: "settings", label: "Настройки" },
+		{ key: "audit", label: "Аудит" },
 	];
 
 	const strategyLabels: Record<string, string> = { daily: "Ежедневная", monthly: "Ежемесячная", hourly: "Почасовая" };
@@ -1572,6 +1607,54 @@
 			</button>
 		</div>
 	</div>
+</div>
+{/if}
+
+<!-- Audit tab content -->
+{#if activeTab === 'audit'}
+<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+	<h3 class="text-lg font-semibold text-gray-900 mb-4">Аудит изменений проекта</h3>
+
+	{#if auditLoading}
+	<p class="text-sm text-gray-500 text-center py-8">Загрузка...</p>
+	{:else if auditEntries.length === 0}
+		<p class="text-sm text-gray-500 text-center py-8">Журнал изменений пуст.</p>
+	{:else}
+		<div class="space-y-2 mb-4">
+			{#each auditEntries as entry}
+				<div class="border border-gray-100 rounded-lg p-3 hover:bg-gray-50 transition-colors">
+					<div class="flex items-start justify-between gap-3">
+						<div class="min-w-0 flex-1">
+							<div class="flex items-center gap-2 mb-1">
+								<span class="px-2 py-0.5 rounded-md text-[11px] font-medium bg-gray-100 text-gray-700">{auditActionLabel(entry.action)}</span>
+								<span class="text-xs text-gray-400">{entry.created_at ? new Date(entry.created_at).toLocaleString('ru-RU') : ''}</span>
+							</div>
+							{#if entry.details}
+								<p class="text-sm text-gray-700">{entry.details}</p>
+							{/if}
+							{#if entry.new_values}
+								<pre class="text-xs text-gray-500 mt-1 overflow-x-auto bg-gray-50 p-2 rounded whitespace-pre-wrap">{JSON.stringify(entry.new_values, null, 2)}</pre>
+							{/if}
+						</div>
+					</div>
+				</div>
+			{/each}
+		</div>
+
+		{#if auditTotalPages > 1}
+			<div class="flex items-center justify-between pt-4 border-t border-gray-200">
+				<p class="text-sm text-gray-500">Страница {auditPage} из {auditTotalPages} ({auditTotal} записей)</p>
+				<div class="flex gap-1">
+					<button onclick={() => { if (auditPage > 1) { auditPage--; loadAuditLog(); } }} disabled={auditPage <= 1} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+						Назад
+					</button>
+					<button onclick={() => { if (auditPage < auditTotalPages) { auditPage++; loadAuditLog(); } }} disabled={auditPage >= auditTotalPages} class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+						Вперёд
+					</button>
+				</div>
+			</div>
+		{/if}
+	{/if}
 </div>
 {/if}
 

@@ -194,6 +194,10 @@ export const api = {
 			}
 			return fetcher(path);
 		},
+		getAuditLog: (projectId: string, page: number, pageSize: number) => {
+			let path = `/api/projects/${projectId}/audit-log?page=${page}&page_size=${pageSize}`;
+			return fetcher(path);
+		},
 		bulkUpdateQueries: (projectId: string, data: any) =>
 			fetcher(`/api/projects/${projectId}/queries/bulk-update`, { method: "POST", body: JSON.stringify(data) }),
 		globalSearch: (q: string) =>
