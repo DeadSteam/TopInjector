@@ -263,12 +263,12 @@
 				if (reportToDate) fetchUrl += "to_date=" + encodeURIComponent(reportToDate);
 			}
 			const blob = await fetch(fetchUrl).then(r => r.blob());
-			const url = URL.createObjectURL(blob);
+			const blobUrl = URL.createObjectURL(blob);
 			const a = document.createElement("a");
-			a.href = url;
+			a.href = blobUrl;
 			a.download = `report_${type}_${Date.now()}.csv`;
 			a.click();
-			URL.revokeObjectURL(url);
+			URL.revokeObjectURL(blobUrl);
 		} catch (e) {
 			console.error("Export failed:", e);
 		}
