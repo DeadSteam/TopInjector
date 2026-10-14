@@ -39,11 +39,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_balance_transactions_project_id", "balance_transactions", ["project_id"], unique=False)
-    op.create_index("ix_balance_transactions_created_at", "balance_transactions", ["created_at"], unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index("ix_balance_transactions_created_at", table_name="balance_transactions")
     op.drop_index("ix_balance_transactions_project_id", table_name="balance_transactions")
     op.drop_table("balance_transactions")
     op.drop_column("projects", "balance_credits")

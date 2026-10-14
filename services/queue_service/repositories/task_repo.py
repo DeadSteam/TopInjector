@@ -14,12 +14,32 @@ class QueueTaskRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_all(self, project_id: UUID | None = None, status: str | None = None) -> list[QueueTask]:
+    async def get_all(
+        self,
+        project_id: UUID | None = None,
+        status: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[QueueTask]:
+        from datetime import datetime, timezone
+
         query = select(QueueTask)
         if project_id:
             query = query.where(QueueTask.project_id == project_id)
         if status:
             query = query.where(QueueTask.status == status)
+        if from_date:
+            try:
+                fd = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+                query = query.where(QueueTask.created_at >= fd)
+            except (ValueError, TypeError):
+                pass
+        if to_date:
+            try:
+                td = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc)
+                query = query.where(QueueTask.created_at <= td)
+            except (ValueError, TypeError):
+                pass
         result = await self._session.execute(query.order_by(QueueTask.created_at))
         return list(result.scalars().all())
 

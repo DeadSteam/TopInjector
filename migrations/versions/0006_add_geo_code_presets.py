@@ -28,22 +28,9 @@ def upgrade() -> None:
         sa.Column("is_city_center", sa.JSON(), nullable=True),
         sa.Column("search_aliases", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-    )
-    op.create_primary_key("pk_geo_code_presets_id", "geo_code_presets", ["id"])
-    op.create_unique_index(
-        "uq_geo_code_preset_city_region",
-        "geo_code_presets",
-        ["city_name", "region_name"]
-    )
-    op.create_index(
-        "ix_geo_code_presets_city_name",
-        "geo_code_presets",
-        ["city_name"]
-    )
-    op.create_index(
-        "ix_geo_code_presets_region_name",
-        "geo_code_presets",
-        ["region_name"]
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("city_name", "region_name", name="uq_geo_code_preset_city_region"),
     )
 
 

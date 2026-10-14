@@ -49,11 +49,13 @@ async def push_tasks(
 async def list_tasks(
     project_id: str | None = None,
     status: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     task_repo: QueueTaskRepository = Depends(_task_repo),
 ):
-    """List queue tasks with optional filters."""
+    """List queue tasks with optional filters including date range."""
     pid = UUID(project_id) if project_id else None
-    tasks = await task_repo.get_all(pid, status)
+    tasks = await task_repo.get_all(pid, status, from_date, to_date)
     return [
         {
             "id": str(t.id),
@@ -101,6 +103,8 @@ async def clear_queue(
 @router.get("/feed")
 async def queue_feed(
     project_id: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     """Server-Sent Events feed for real-time queue status updates."""
@@ -114,6 +118,18 @@ async def queue_feed(
                 query = sa_select(QueueTask.status, func.count())
                 if pid:
                     query = query.where(QueueTask.project_id == pid)
+                if from_date:
+                    try:
+                        fd = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+                        query = query.where(QueueTask.created_at >= fd)
+                    except (ValueError, TypeError):
+                        pass
+                if to_date:
+                    try:
+                        td = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc)
+                        query = query.where(QueueTask.created_at <= td)
+                    except (ValueError, TypeError):
+                        pass
                 query = query.group_by(QueueTask.status)
                 result = await session.execute(query)
                 stats_map = {str(r[0]): r[1] for r in result.all()}

@@ -1422,16 +1422,17 @@ async def get_project_clicks(
             if geo_lower not in geo_str:
                 continue
 
-        # Suggestion mode filter — need to look up query.suggestions
+        # Suggestion mode filter — need to look up query.query_modifications
         if suggestion_mode and suggestion_mode != "all" and t.query_id:
             try:
                 q_row = await session.execute(
-                    select(_QueryModel.suggestions).where(_QueryModel.id == t.query_id)
+                    select(_QueryModel.query_modifications).where(_QueryModel.id == t.query_id)
                 )
-                suggestions = q_row.scalar_one_or_none() or {}
-                if suggestion_mode == "without" and suggestions:
+                mods = q_row.scalar_one_or_none() or {}
+                has_suggestions = bool(mods.get("has_suggestions") or mods.get("with_suggestions"))
+                if suggestion_mode == "without" and has_suggestions:
                     continue
-                if suggestion_mode == "with" and not suggestions:
+                if suggestion_mode == "with" and not has_suggestions:
                     continue
             except Exception:
                 pass
@@ -1462,9 +1463,12 @@ async def get_project_audit_log(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     action: str | None = Query(default=None),
+    geo: str | None = Query(default=None),
+    suggestion_mode: str | None = Query(default=None),
 ):
-    """Return audit log entries for a project with pagination."""
+    """Return audit log entries for a project with pagination and optional filters."""
     from sqlalchemy import func as _func
+    from sqlalchemy.orm import class_mapper
 
     pid = UUID(project_id)
     base_query = select(AuditLogEntry).where(
@@ -1472,6 +1476,53 @@ async def get_project_audit_log(
     )
     if action:
         base_query = base_query.where(AuditLogEntry.action == action)
+
+    # Server-side geo filter: search substring in old_values or new_values
+    if geo:
+        geo_pattern = f"%{geo}%"
+        base_query = base_query.where(
+            or_(
+                AuditLogEntry.old_values.op('->>')('geo').like(geo_pattern),
+                AuditLogEntry.new_values.op('->>')('geo').like(geo_pattern),
+                AuditLogEntry.old_values.op('->>')('domain').like(geo_pattern),
+                AuditLogEntry.new_values.op('->>')('domain').like(geo_pattern),
+            )
+        )
+
+    # Server-side suggestion_mode filter: check query_modifications.has_suggestions or with_suggestions
+    if suggestion_mode and suggestion_mode != "all":
+        def _suggestion_filter():
+            conditions = []
+            # Check old_values.query_modifications
+            conditions.append(
+                AuditLogEntry.old_values.op('->>')(suggestion_mode) == "true"
+                if suggestion_mode in ("has_suggestions", "with_suggestions")
+                else None
+            )
+            # Check new_values.query_modifications
+            conditions.append(
+                AuditLogEntry.new_values.op('->>')(suggestion_mode) == "true"
+                if suggestion_mode in ("has_suggestions", "with_suggestions")
+                else None
+            )
+            return or_(*[c for c in conditions if c is not None])
+
+        if suggestion_mode == "without":
+            # Exclude entries where either old or new has suggestions
+            base_query = base_query.where(
+                or_(
+                    AuditLogEntry.old_values.op('->>')('"query_modifications"').not_contains('"has_suggestions": true'),
+                    AuditLogEntry.new_values.op('->>')('"query_modifications"').not_contains('"has_suggestions": true'),
+                )
+            )
+        elif suggestion_mode == "with":
+            # Include only entries where either old or new has suggestions
+            base_query = base_query.where(
+                or_(
+                    AuditLogEntry.old_values.op('->>')('"query_modifications"').contains('"has_suggestions": true'),
+                    AuditLogEntry.new_values.op('->>')('"query_modifications"').contains('"has_suggestions": true'),
+                )
+            )
 
     total_result = await session.execute(select(_func.count()).select_from(base_query.subquery()))
     total = total_result.scalar() or 0

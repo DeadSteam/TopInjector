@@ -25,12 +25,23 @@
 	let showTaskDetail = $state(false);
 	let taskDetail = $state<QueueTask | null>(null);
 
+	// Filters: project list + date range
+	let projects = $state<any[]>([]);
+	let filterFromDate = $state("");
+	let filterToDate = $state("");
+
 	function openTaskDetail(id: string): void {
 		const task = tasks.find(t => t.id === id);
 		if (task) {
 			taskDetail = task;
 			showTaskDetail = true;
 		}
+	}
+
+	async function loadProjects() {
+		try {
+			projects = await api.projects.list();
+		} catch { /* ignore */ }
 	}
 
 	let eventSource: EventSource | null = null;
@@ -60,7 +71,7 @@
 	async function loadQueue() {
 		try {
 			let statusFilter = filterStatus === "all" ? undefined : filterStatus;
-			const data = await api.queue.list(undefined, statusFilter);
+			const data = await api.queue.list(projectId || undefined, statusFilter, filterFromDate || undefined, filterToDate || undefined);
 			tasks = data.tasks || [];
 			updateStats();
 		} catch (err) {
@@ -68,6 +79,12 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function clearDateFilters() {
+		filterFromDate = "";
+		filterToDate = "";
+		loadQueue();
 	}
 
 	function updateStats() {
@@ -83,8 +100,8 @@
 
 	function startSSE() {
 		stopSSE();
-		const url = api.queue.feed(projectId || undefined).url;
-		eventSource = new EventSource(url);
+		const es = api.queue.feed(projectId || undefined, filterFromDate || undefined, filterToDate || undefined);
+		eventSource = es;
 
 		eventSource.onopen = () => {
 			isConnected = true;
@@ -131,16 +148,29 @@
 	let refreshInterval: number | null = null;
 
 	onMount(() => {
-		loadQueue();
-		startSSE();
+		loadProjects();
+		// loadQueue and startSSE are handled by $effect below
 		refreshInterval = window.setInterval(() => {
-			loadQueue();
+			// Only refresh tasks on interval, SSE reconnects via $effect
+			if (filterStatus === "all" || filterSource === "all") {
+				loadQueue();
+			}
 		}, 15000); // Poll every 15s as fallback
 	});
 
 	onDestroy(() => {
 		stopSSE();
 		if (refreshInterval) clearInterval(refreshInterval);
+	});
+
+	// Reconnect SSE + reload queue when project or date filters change
+	$effect(() => {
+		const _ = projectId;
+		const __ = filterFromDate;
+		const ___ = filterToDate;
+		startSSE();
+		loadQueue();
+		return () => {};
 	});
 
 	function refresh() { loadQueue(); }
@@ -188,6 +218,35 @@
 					<p class="text-2xl font-bold text-gray-900 mt-2">{stats[status as keyof typeof stats]}</p>
 				</div>
 			{/each}
+		</div>
+
+		<!-- Project + date range filters -->
+		<div class="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+			<div class="flex flex-wrap items-end gap-3">
+				<div>
+					<label class="block text-xs font-medium text-gray-700 mb-1">Проект</label>
+					<select bind:value={projectId} onchange={() => loadQueue()}
+						class="px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 min-w-[180px]">
+						<option value="">Все проекты</option>
+						{#each projects as p}
+							<option value={p.id}>{p.name}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label class="block text-xs font-medium text-gray-700 mb-1">Период с</label>
+					<input type="date" bind:value={filterFromDate}
+						class="px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+				</div>
+				<div>
+					<label class="block text-xs font-medium text-gray-700 mb-1">Период по</label>
+					<input type="date" bind:value={filterToDate}
+						class="px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+				</div>
+				{#if filterFromDate || filterToDate}
+					<button onclick={clearDateFilters} class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">Очистить</button>
+				{/if}
+			</div>
 		</div>
 
 		<!-- Filter -->

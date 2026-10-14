@@ -279,8 +279,8 @@ async def test_analytics_summary(client: AsyncClient):
     resp = await client.get("/api/analytics/summary")
     assert resp.status_code == codes.OK
     data = resp.json()
-    assert "total_clicks" in data
-    assert "completed_rate" in data
+    assert "completed_clicks" in data
+    assert "project_id" in data
 
 
 # ── Analytics: clicks timeline --------------------------------------------- #

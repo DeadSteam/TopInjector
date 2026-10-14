@@ -182,6 +182,10 @@
 	let auditEntries: any[] = [];
 	let auditLoading = $state(false);
 	let auditPage = $state(1);
+
+	// Audit tab filters
+	let auditGeoFilter = $state("");
+	let auditSuggestionMode = $state<"all" | "with" | "without">("all");
 	let auditTotal = $state(0);
 	let auditTotalPages = $state(1);
 
@@ -498,7 +502,9 @@
 	async function loadAuditLog() {
 		auditLoading = true;
 		try {
-			const data = await api.projects.getAuditLog(projectId, auditPage, 20);
+			const geoFilter = auditGeoFilter || undefined;
+			const suggestionFilter = auditSuggestionMode === 'all' ? undefined : auditSuggestionMode;
+			const data = await api.projects.getAuditLog(projectId, auditPage, 20, geoFilter, suggestionFilter);
 			auditEntries = data.entries || [];
 			auditTotal = data.total || 0;
 			auditTotalPages = Math.ceil(auditTotal / 20) || 1;
@@ -520,6 +526,27 @@
 			remove_delegate: 'Удалён делегат',
 		};
 		return labels[action] || action;
+	}
+
+	function shouldShowAuditEntry(entry: any): boolean {
+		// Geo filter — check old_values and new_values for geo substring match
+		if (auditGeoFilter) {
+			const needle = auditGeoFilter.toLowerCase();
+			const jsonStr = JSON.stringify({ old_values: entry.old_values, new_values: entry.new_values }).toLowerCase();
+			if (!jsonStr.includes(needle)) return false;
+		}
+		// Suggestion mode filter — check query_modifications in values
+		if (auditSuggestionMode && auditSuggestionMode !== 'all') {
+			const vals = [entry.old_values, entry.new_values].filter(Boolean) as object[];
+			let hasSuggestions = false;
+			for (const v of vals) {
+				const mods = (v as any).query_modifications || {};
+				if (mods.has_suggestions || mods.with_suggestions) { hasSuggestions = true; break; }
+			}
+			if (auditSuggestionMode === 'without' && hasSuggestions) return false;
+			if (auditSuggestionMode === 'with' && !hasSuggestions) return false;
+		}
+		return true;
 	}
 
 	function toggleSelect(queryId: string) {
@@ -713,14 +740,28 @@
 		loadProject();
 	});
 
+	// Reload audit log when geo or suggestion mode filters change
+	$effect(() => {
+		const _ = auditGeoFilter;
+		const __ = auditSuggestionMode;
+		if (activeTab === 'audit' && !auditLoading) {
+			auditPage = 1;
+			loadAuditLog();
+		}
+		return () => {};
+	});
+
+
 	function switchTab(tab: string) {
 		activeTab = tab;
 		if (tab === 'positions') loadPositions();
 		if (tab === 'markers') loadMarkers();
 		if (tab === 'webmaster') loadWebmarkers();
-		if (tab === 'stats') loadRequestTable();
-		if (tab === 'delegates') loadDelegates();
-		if (tab === 'analytics') loadProjectAnalytics();
+		if (tab === 'audit') {
+			auditPage = 1;
+			loadAuditLog();
+		}
+		if (tab === "stats") loadRequestTable();
 		if (tab === 'settings' && project) {
 			settingIntegration = project.integrations?.integration_type || "default";
 			settingScheduleStart = project.scheduling_window?.start || "";
@@ -733,6 +774,8 @@
 			settingsSaved = false;
 			loadAutoStop();
 		}
+		if (tab === "analytics") loadProjectAnalytics();
+		if (tab === "delegates") loadDelegates();
 		startAutoRefresh();
 	}
 
@@ -1620,8 +1663,35 @@
 	{:else if auditEntries.length === 0}
 		<p class="text-sm text-gray-500 text-center py-8">Журнал изменений пуст.</p>
 	{:else}
+		<!-- Audit filters -->
+		<div class="flex flex-wrap items-end gap-3 mb-4">
+			<div class="flex-1 min-w-[200px]">
+				<label class="block text-xs font-medium text-gray-700 mb-1">Поиск по geo</label>
+				<input type="text" bind:value={auditGeoFilter} placeholder="Название города..."
+					class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-xs font-medium text-gray-700 mb-1">Подсказки</label>
+				<div class="flex gap-1">
+					<button onclick={() => auditSuggestionMode = 'all'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${auditSuggestionMode === 'all' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						Все
+					</button>
+					<button onclick={() => auditSuggestionMode = 'with'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${auditSuggestionMode === 'with' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						С подсказками
+					</button>
+					<button onclick={() => auditSuggestionMode = 'without'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${auditSuggestionMode === 'without' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						Без подсказок
+					</button>
+				</div>
+			</div>
+		</div>
+
 		<div class="space-y-2 mb-4">
 			{#each auditEntries as entry}
+				{#if shouldShowAuditEntry(entry)}
 				<div class="border border-gray-100 rounded-lg p-3 hover:bg-gray-50 transition-colors">
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0 flex-1">
@@ -1638,6 +1708,7 @@
 						</div>
 					</div>
 				</div>
+				{/if}
 			{/each}
 		</div>
 

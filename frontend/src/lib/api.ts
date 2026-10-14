@@ -194,8 +194,10 @@ export const api = {
 			}
 			return fetcher(path);
 		},
-		getAuditLog: (projectId: string, page: number, pageSize: number) => {
+		getAuditLog: (projectId: string, page: number, pageSize: number, geo?: string, suggestionMode?: string) => {
 			let path = `/api/projects/${projectId}/audit-log?page=${page}&page_size=${pageSize}`;
+			if (geo) path += `&geo=${encodeURIComponent(geo)}`;
+			if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
 			return fetcher(path);
 		},
 		bulkUpdateQueries: (projectId: string, data: any) =>
@@ -256,10 +258,12 @@ export const api = {
 			fetcher(`/api/projects/groups/${id}`, { method: "DELETE" }),
 	},
 	queue: {
-		list: (project?: string, status?: string) => {
+		list: (project?: string, status?: string, fromDate?: string, toDate?: string) => {
 			let path = "/api/queue/?";
 			if (project) path += `project_id=${project}&`;
-			if (status) path += `status=${status}`;
+			if (status) path += `status=${status}&`;
+			if (fromDate) path += `from_date=${encodeURIComponent(fromDate)}&`;
+			if (toDate) path += `to_date=${encodeURIComponent(toDate)}`;
 			return fetcher(path);
 		},
 		push: (data: any) =>
@@ -270,8 +274,13 @@ export const api = {
 			fetcher(`/api/queue/clear?project_id=${projectId}`, { method: "POST" }),
 		proklik: (data: any) =>
 			fetcher("/api/queue/proklik", { method: "POST", body: JSON.stringify(data) }),
-		feed: (projectId?: string) => {
-			const url = `${BASE_URL}/api/queue/feed${projectId ? `?project_id=${projectId}` : ""}`;
+		feed: (projectId?: string, fromDate?: string, toDate?: string) => {
+			let url = `${BASE_URL}/api/queue/feed`;
+			const params = new URLSearchParams();
+			if (projectId) params.set("project_id", projectId);
+			if (fromDate) params.set("from_date", fromDate);
+			if (toDate) params.set("to_date", toDate);
+			if (params.toString()) url += "?" + params.toString();
 			return new EventSource(url);
 		},
 		stats: (projectId?: string) => {
@@ -283,14 +292,18 @@ export const api = {
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),
-		clicks: (projectId?: string) => {
+		clicks: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
 			let path = "/api/analytics/clicks";
-			if (projectId) path += `?project_id=${projectId}`;
+			if (projectId) path += `&project_id=${projectId}`;
+			if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
+			if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
 			return fetcher(path);
 		},
-		summary: (projectId?: string) => {
+		summary: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
 			let path = "/api/analytics/summary";
-			if (projectId) path += `?project_id=${projectId}`;
+			if (projectId) path += `&project_id=${projectId}`;
+			if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
+			if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
 			return fetcher(path);
 		},
 		trackingPositions: (projectId?: string) => {
@@ -298,9 +311,11 @@ export const api = {
 		if (projectId) path += `?project_id=${projectId}`;
 		return fetcher(path);
 	},
-	topRanges: (projectId?: string) => {
+	topRanges: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
 		let path = "/api/analytics/top-ranges";
 		if (projectId) path += `?project_id=${projectId}`;
+		if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
+		if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
 		return fetcher(path);
 	},
 	},

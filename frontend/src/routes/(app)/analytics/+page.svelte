@@ -49,6 +49,10 @@
 	let reportFromDate = $state("");
 	let reportToDate = $state("");
 
+	// Analytics filters: suggestion_mode + position threshold
+	let filterSuggestionMode = $state<"all" | "with" | "without">("all");
+	let filterPositionThreshold = $state<number | "">("");
+
 	function openEditDailyLimit(project: any) {
 		editingProjectName = project.name;
 		newDailyLimit = project.daily_limit || 500;
@@ -90,18 +94,18 @@
 
 	async function loadSummary() {
 		if (selectedProject) {
-			stats = await api.analytics.summary(selectedProject);
+			stats = await api.analytics.summary(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 		} else {
-			stats = await api.analytics.summary();
+			stats = await api.analytics.summary(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 		}
 	}
 
 	async function loadTimeline() {
 		if (selectedProject) {
-			const data = await api.analytics.clicks(selectedProject);
+			const data = await api.analytics.clicks(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 			timelineData = data.timeline || [];
 		} else {
-			const data = await api.analytics.clicks();
+			const data = await api.analytics.clicks(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 			timelineData = data.timeline || [];
 		}
 		timelineLoading = false;
@@ -123,9 +127,9 @@
 		topRangesLoading = true;
 		try {
 			if (selectedProject) {
-				topRangesData = await api.analytics.topRanges(selectedProject);
+				topRangesData = await api.analytics.topRanges(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 			} else {
-				topRangesData = await api.analytics.topRanges();
+				topRangesData = await api.analytics.topRanges(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 			}
 		} catch {
 			topRangesData = null;
@@ -154,6 +158,16 @@
 
 	onDestroy(() => {
 		if (refreshInterval) clearInterval(refreshInterval);
+	});
+
+	// Reload analytics when suggestion_mode or position_threshold filter changes
+	$effect(() => {
+		const _ = filterSuggestionMode; // trigger on change
+		const __ = filterPositionThreshold; // trigger on threshold change
+		if (!projectLoading && !summaryLoading) {
+			loadAll();
+		}
+		return () => {};
 	});
 
 	function handleProjectChange(e: Event) {
@@ -547,6 +561,36 @@
 			onclick={async () => { downloadTimelineReport(); }}>
 			График кликов (CSV)
 		</button>
+	</div>
+
+	<!-- Suggestion mode + position filter -->
+	<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+		<h3 class="font-medium text-gray-900 mb-4">Фильтры выдачи</h3>
+		<div class="flex flex-wrap items-end gap-4">
+			<div class="flex-1 min-w-[200px]">
+				<label class="block text-xs font-medium text-gray-700 mb-1">Подсказки</label>
+				<div class="flex gap-1">
+					<button onclick={() => filterSuggestionMode = 'all'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${filterSuggestionMode === 'all' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						Все
+					</button>
+					<button onclick={() => filterSuggestionMode = 'with'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${filterSuggestionMode === 'with' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						С подсказками
+					</button>
+					<button onclick={() => filterSuggestionMode = 'without'}
+						class={`px-3 py-1.5 text-xs rounded-lg transition-colors ${filterSuggestionMode === 'without' ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
+						Без подсказок
+					</button>
+				</div>
+			</div>
+			<div class="min-w-[180px]">
+				<label class="block text-xs font-medium text-gray-700 mb-1">Позиция хуже чем</label>
+				<input type="number" bind:value={filterPositionThreshold} min="1" max="200" placeholder="Например: 5"
+					class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+		</div>
+		<p class="text-xs text-gray-400 mt-2">Фильтрует аналитику по наличию подсказок в запросах и скрывает позиции лучше указанного значения. Меняет данные на графиках и таймлайне.</p>
 	</div>
 
 	<!-- Daily limit edit modal -->
