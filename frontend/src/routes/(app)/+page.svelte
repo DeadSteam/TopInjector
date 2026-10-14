@@ -69,6 +69,10 @@
 		if (showCreateModal) {
 			multigeoRegions = [];
 			showMultigeoBuilder = false;
+			geoSearchQuery = "";
+			geoSearchResults = [];
+			geoSearchOpen = false;
+			geoSearchTargetIdx = null;
 		}
 	});
 
@@ -170,6 +174,42 @@
 	let showMultigeoBuilder = $state(false);
 	// Multigeo regions: [{region: string, percentage: number}]
 	let multigeoRegions = $state<Array<{ region: string; percentage: number }>>([]);
+
+	// Geo code search for multigeo builder
+	let geoSearchQuery = $state("");
+	let geoSearchResults = $state<Array<{ id: string; name: string; city_name: string; region_name: string; country_code: string }>>([]);
+	let geoSearchLoading = $state(false);
+	let geoSearchOpen = $state(false);
+	let geoSearchTargetIdx = $state<number | null>(null);
+	let geoDebounceTimer: number | null = null;
+
+	async function searchGeoCodes(q: string) {
+		if (!q || q.trim().length < 1) { geoSearchResults = []; return; }
+		try {
+			geoSearchLoading = true;
+			const results = await api.projects.geoCodesSearch(q.trim(), 15);
+			geoSearchResults = results;
+			geoSearchOpen = true;
+		} catch { geoSearchResults = []; }
+		finally { geoSearchLoading = false; }
+	}
+
+	function selectGeoCode(result: any) {
+		if (geoSearchTargetIdx !== null && result) {
+			// Use the full region name as the region value for multigeo
+			multigeoRegions[geoSearchTargetIdx].region = result.region_name || result.city_name;
+			multigeoRegions = [...multigeoRegions];
+		}
+		geoSearchQuery = "";
+		geoSearchResults = [];
+		geoSearchOpen = false;
+		geoSearchTargetIdx = null;
+	}
+
+	function openGeoSearch(idx: number) {
+		geoSearchTargetIdx = idx;
+		geoSearchOpen = true;
+	}
 
 	async function loadData() {
 		try {
@@ -982,17 +1022,54 @@
 						</div>
 
 						{#if showMultigeoBuilder}
-						<div class="space-y-2">
+						<div class="space-y-3">
+							<p class="text-xs text-gray-500">Выберите регионы из каталога городов или введите вручную. Распределение процентов должно суммироваться в 100%.</p>
 							{#each multigeoRegions as region, idx}
-								<div class="flex gap-2 items-center">
-									<input type="text" bind:value={multigeoRegions[idx].region} placeholder="Регион (напр. Москва)" class="flex-1 px-2 py-1 border border-gray-300 rounded text-sm" />
-									<input type="number" bind:value={multigeoRegions[idx].percentage} min="1" max="100" placeholder="%" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm" />
-									<button type="button" onclick={() => { multigeoRegions.splice(idx, 1); multigeoRegions = [...multigeoRegions]; }} class="text-red-500 hover:text-red-700 text-sm">✕</button>
+							<div class="flex gap-2 items-center">
+								<div class="flex-1 relative">
+									<input type="text" bind:value={multigeoRegions[idx].region} placeholder="Регион (напр. Москва)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm pr-8" />
+									<button type="button" onclick={() => openGeoSearch(idx)} title="Выбрать из каталога городов" class="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-blue-600 transition-colors" tabindex="-1">
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+									</button>
 								</div>
+								<input type="number" bind:value={multigeoRegions[idx].percentage} min="1" max="100" placeholder="%" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm" />
+								<button type="button" onclick={() => { multigeoRegions.splice(idx, 1); multigeoRegions = [...multigeoRegions]; }} class="text-red-500 hover:text-red-700 text-sm">✕</button>
+							</div>
 							{/each}
 							<button type="button" onclick={() => { multigeoRegions.push({ region: "", percentage: 0 }); multigeoRegions = [...multigeoRegions]; }} class="text-blue-600 hover:text-blue-700 text-sm">+ Добавить регион</button>
 							{#if multigeoRegions.length > 0}
 								<p class="text-xs text-gray-500">Сумма процентов: <span class={multigeoRegions.reduce((s, r) => s + (r.percentage || 0), 0) === 100 ? "text-green-600 font-medium" : "text-red-500"}>{multigeoRegions.reduce((s, r) => s + (r.percentage || 0), 0)}% / 100%</span></p>
+							{/if}
+
+							<!-- Geo code search dropdown -->
+							{#if geoSearchOpen && geoSearchTargetIdx !== null}
+							<div class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onmousedown={(e) => { e.target === e.currentTarget && (geoSearchOpen = false); }}>
+								<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-4 m-4">
+									<h3 class="text-base font-semibold text-gray-900 mb-3">Выберите регион из каталога</h3>
+									<input type="text" bind:value={geoSearchQuery} placeholder="Введите название города или региона..." oninput={(e) => {
+										const v = (e.target as HTMLInputElement).value;
+										if (geoDebounceTimer) clearTimeout(geoDebounceTimer);
+										geoDebounceTimer = setTimeout(() => searchGeoCodes(v), 300);
+									}} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+									{#if geoSearchLoading}
+										<p class="text-sm text-gray-500 mt-2 text-center">Поиск...</p>
+									{:else if geoSearchResults.length > 0}
+										<div class="max-h-60 overflow-y-auto mt-2 border rounded-lg divide-y">
+											{#each geoSearchResults as result}
+											<button type="button" onclick={() => selectGeoCode(result)} class="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors text-sm">
+												<div class="font-medium text-gray-900">{result.city_name}</div>
+												<div class="text-xs text-gray-500">{result.region_name}{result.country_code ? ` (${result.country_code})` : ''}</div>
+											</button>
+											{/each}
+										</div>
+									{:else if geoSearchQuery && geoSearchQuery.length >= 1}
+										<p class="text-sm text-gray-500 mt-2">Ничего не найдено</p>
+									{/if}
+									<div class="flex justify-end gap-2 mt-3">
+										<button onclick={() => { geoSearchOpen = false; geoSearchQuery = ''; geoSearchResults = []; geoSearchTargetIdx = null; }} class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Отмена</button>
+									</div>
+								</div>
+							</div>
 							{/if}
 						</div>
 						{/if}

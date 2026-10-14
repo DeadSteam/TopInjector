@@ -234,6 +234,8 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/auto-stop`, { method: "PUT", body: JSON.stringify(data) }),
 		getAutoStop: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/auto-stop`),
+		geoCodesSearch: (q: string, limit: number = 20) =>
+			fetcher(`/api/projects/geo-codes/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 	},
 	balance: {
 		get: (projectId: string) => fetcher(`/api/projects/${projectId}/balance`),

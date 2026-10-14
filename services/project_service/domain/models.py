@@ -48,6 +48,8 @@ class Project(UUIDModel):
     scheduling_window: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)  # {start: "07:00", end: "22:00"}
     query_modifications: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)  # flags: capital_first, random_caps, typos, trailing_space
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_stop_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # automatic project stop date/time
+    balance_credits: Mapped[float] = mapped_column(Integer, nullable=False, default=0)  # project credits in kopeks (integer)
 
     __table_args__ = (UniqueConstraint("user_id", "domain", name="uq_projects_user_domain"),)
 
@@ -149,4 +151,34 @@ class Webmarker(UUIDModel):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_sync: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __tablename__ = "webmarkers"
+
+class BalanceTransaction(UUIDModel):
+    """Balance change transaction for a project."""
+
+    __tablename__ = "balance_transactions"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)  # change in kopeks (positive=add, negative=spend)
+    description: Mapped[str | None] = mapped_column(String(500))
+    type: Mapped[str] = mapped_column(String(20), nullable=False, default="add")  # add / set / spend / refund
+
+
+class GeoCodePreset(UUIDModel):
+    """Predefined city/region geo codes for the multigeo builder."""
+
+    __tablename__ = "geo_code_presets"
+
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    yandex_geo_id: Mapped[int | None] = mapped_column(JSONType, nullable=True)
+    country_code: Mapped[str] = mapped_column(String(3), nullable=False, server_default="ru")
+    region_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    city_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_city_center: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    search_aliases: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("city_name", "region_name", name="uq_geo_code_preset_city_region"),
+    )
+

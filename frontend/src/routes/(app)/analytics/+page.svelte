@@ -45,6 +45,10 @@
 	let dailyLimitSaving = $state(false);
 	let dailyLimitSaved = $state(false);
 
+	// Date range for report export
+	let reportFromDate = $state("");
+	let reportToDate = $state("");
+
 	function openEditDailyLimit(project: any) {
 		editingProjectName = project.name;
 		newDailyLimit = project.daily_limit || 500;
@@ -250,7 +254,15 @@
 		if (!selectedProject) return;
 		try {
 			const fn = type === 'analytics' ? api.projects.reportAnalytics : api.projects.reportSummary;
-			const blob = await fn(selectedProject);
+			const url = "/api/projects/" + encodeURIComponent(selectedProject) + "/reports/" + type + ".csv";
+			let fetchUrl = url;
+			if (reportFromDate || reportToDate) {
+				fetchUrl += "?";
+				// Project service report endpoints expect 'from_date'/'to_date' (not 'start_date'/'end_date')
+				if (reportFromDate) fetchUrl += "from_date=" + encodeURIComponent(reportFromDate) + "&";
+				if (reportToDate) fetchUrl += "to_date=" + encodeURIComponent(reportToDate);
+			}
+			const blob = await fetch(fetchUrl).then(r => r.blob());
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
 			a.href = url;
@@ -265,7 +277,12 @@
 	async function downloadTimelineReport() {
 		if (!selectedProject) return;
 		try {
-			const response = await fetch("/api/analytics/clicks?project_id=" + encodeURIComponent(selectedProject));
+			let timelineUrl = "/api/analytics/clicks?project_id=" + encodeURIComponent(selectedProject);
+			if (reportFromDate || reportToDate) {
+				if (reportFromDate) timelineUrl += "&start_date=" + encodeURIComponent(reportFromDate);
+				if (reportToDate) timelineUrl += "&end_date=" + encodeURIComponent(reportToDate);
+			}
+			const response = await fetch(timelineUrl);
 			const data = await response.json();
 			let csv = 'Date,Clicks\n';
 			for (const point of data.timeline || []) {
@@ -489,6 +506,26 @@
 						{/each}
 					</tbody>
 				</table>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Date range selector for export -->
+	{#if selectedProject}
+		<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+			<h3 class="font-medium text-gray-900 mb-4">Экспорт отчёта</h3>
+			<div class="flex flex-wrap items-end gap-4">
+				<div>
+					<label class="block text-xs font-medium text-gray-700 mb-1">Период с</label>
+					<input type="date" bind:value={reportFromDate} class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+				</div>
+				<div>
+					<label class="block text-xs font-medium text-gray-700 mb-1">Период по</label>
+					<input type="date" bind:value={reportToDate} class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+				</div>
+				{#if reportFromDate || reportToDate}
+					<button onclick={() => { reportFromDate = ""; reportToDate = ""; }} class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">Очистить</button>
+				{/if}
 			</div>
 		</div>
 	{/if}

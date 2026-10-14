@@ -78,22 +78,30 @@ async def get_clicks(
     end_date: str = Query(default=""),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return click timeline data for charts."""
+    """Return click timeline data for charts with optional date range filter."""
     pid = _parse_pid(project_id)
+    where_conditions = [QueueTask.status == "completed"]
     if pid:
-        result = await session.execute(
-            select(QueueTask.created_at, func.count(QueueTask.id))
-            .where(QueueTask.project_id == pid, QueueTask.status == "completed")
-            .group_by(QueueTask.created_at)
-            .order_by(QueueTask.created_at)
-        )
-    else:
-        result = await session.execute(
-            select(QueueTask.created_at, func.count(QueueTask.id))
-            .where(QueueTask.status == "completed")
-            .group_by(QueueTask.created_at)
-            .order_by(QueueTask.created_at)
-        )
+        where_conditions.append(QueueTask.project_id == pid)
+    if start_date:
+        try:
+            sd = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+            where_conditions.append(QueueTask.created_at >= sd)
+        except (ValueError, TypeError):
+            pass
+    if end_date:
+        try:
+            ed = (datetime.fromisoformat(end_date) + __import__('datetime').timedelta(days=1)).replace(tzinfo=timezone.utc)
+            where_conditions.append(QueueTask.created_at < ed)
+        except (ValueError, TypeError):
+            pass
+
+    result = await session.execute(
+        select(QueueTask.created_at, func.count(QueueTask.id))
+        .where(*where_conditions)
+        .group_by(QueueTask.created_at)
+        .order_by(QueueTask.created_at)
+    )
 
     timeline = [
         {"date": row[0].isoformat() if row[0] else "", "count": row[1]}

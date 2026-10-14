@@ -21,6 +21,7 @@ from services.project_service.domain.models import (
     ProjectGroup,
     ProjectDelegate,
     BalanceTransaction,
+    GeoCodePreset,
 )
 from services.project_service.domain.audit_log import AuditLogEntry
 from services.project_service.repositories.project_repo import ProjectRepository
@@ -1512,7 +1513,7 @@ async def record_audit_entry(
     new_values: dict | None = None,
     details: str | None = None,
 ) -> None:
-    """Helper to insert an audit log entry."""
+    """Helper to insert an audit log entry (does NOT commit — caller handles transaction)."""
     entry = AuditLogEntry(
         project_id=project_id,
         user_id=user_id,
@@ -1523,7 +1524,6 @@ async def record_audit_entry(
         details=details,
     )
     session.add(entry)
-    await session.commit()
 
 
 # --- Global Search ------------------------------------------------------------ #
@@ -2167,4 +2167,49 @@ async def get_balance_history(
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size,
     }
+
+
+# --- Geo Code Presets ------------------------------------------------------- #
+
+@router.get("/geo-codes/search")
+async def search_geo_codes(
+    q: str = Query(default="", description="Search query for city/region names"),
+    region: str = Query(default="", description="Filter by federal region name"),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+):
+    """Search geo code presets for the multigeo builder autocomplete."""
+    from sqlalchemy import like
+
+    stmt = select(GeoCodePreset).limit(limit)
+
+    if q.strip():
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                GeoCodePreset.city_name.ilike(pattern),
+                GeoCodePreset.region_name.ilike(pattern),
+                GeoCodePreset.name.ilike(pattern),
+                GeoCodePreset.search_aliases.ilike(pattern),
+            )
+        )
+
+    if region.strip():
+        pattern = f"%{region}%"
+        stmt = stmt.where(GeoCodePreset.region_name.ilike(pattern))
+
+    result = await session.execute(stmt.order_by(GeoCodePreset.city_name))
+    codes = result.scalars().all()
+
+    return [
+        {
+            "id": str(c.id),
+            "name": c.name,
+            "city_name": c.city_name,
+            "region_name": c.region_name,
+            "country_code": c.country_code,
+            "yandex_geo_id": c.yandex_geo_id,
+        }
+        for c in codes
+    ]
 

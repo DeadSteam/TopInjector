@@ -89,6 +89,8 @@
 			{ path: "/", label: "Проекты", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>' },
 			{ path: "/analytics", label: "Аналитика", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>' },
 			{ path: "/queue", label: "Очередь", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
+			{ path: "/balance", label: "Баланс", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
+			{ path: "/notifications", label: "Уведомления", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>' },
 			{ path: "/settings", label: "Настройки", icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' },
 		];
 	}
@@ -157,43 +159,15 @@
 			</button>
 		</div>
 
-		<!-- Notification bell -->
-		<button onclick={() => { showNotifications = !showNotifications; if (notifications.length === 0) loadNotifications(); }} class="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors relative" title="Уведомления">
+		<!-- Notification bell (links to notifications page) -->
+		<a href="/notifications" class="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors relative block" title="Уведомления">
 			<svg class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
 			</svg>
 			{#if unreadCount > 0}
 				<span class="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full"></span>
 			{/if}
-		</button>
-
-		<!-- Notifications dropdown -->
-		{#if showNotifications}
-			<div class="fixed inset-0 z-40" onclick={() => showNotifications = false}></div>
-			<div class="absolute top-12 right-4 z-50 w-80 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden">
-				<div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-					<h3 class="text-sm font-semibold text-gray-900">Уведомления</h3>
-					{#if unreadCount > 0}
-						<button onclick={markAllRead} class="text-xs text-blue-600 hover:text-blue-700">Прочитать все</button>
-					{/if}
-				</div>
-				<div class="max-h-80 overflow-y-auto">
-					{#if notifications.length === 0}
-						<div class="px-4 py-6 text-center text-sm text-gray-400">Нет уведомлений</div>
-					{:else}
-						{#each notifications as n}
-							<div class="px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors {n.is_read ? '' : 'bg-blue-50'}">
-								<p class="text-sm text-gray-900">{n.title || ''}</p>
-								{#if n.body}
-									<p class="text-xs text-gray-600 mt-1">{n.body}</p>
-								{/if}
-								<p class="text-xs text-gray-400 mt-1">{n.created_at ? new Date(n.created_at).toLocaleString('ru-RU') : ''}</p>
-							</div>
-						{/each}
-					{/if}
-				</div>
-			</div>
-		{/if}
+		</a>
 	</aside>
 
 	<!-- Main content -->
