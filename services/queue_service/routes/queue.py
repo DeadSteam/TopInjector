@@ -294,8 +294,15 @@ async def get_dashboard_stats(
     )
     today_completed = today_completed_result.scalar() or 0
 
-    # Balance from user_service default (placeholder — no balance table yet)
-    balance = 0
+    # Total balance across all user projects (in rubles)
+    from services.project_service.domain.models import BalanceTransaction
+
+    bal_result = await session.execute(
+        sa_select(func.coalesce(func.sum(Project.balance_credits), 0))
+        .where(Project.user_id == user_id)
+    )
+    balance_kopeks = bal_result.scalar() or 0
+    balance = round(balance_kopeks / 100, 2)
 
     return {
         "overdue": overdue,

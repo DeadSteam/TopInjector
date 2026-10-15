@@ -43,6 +43,14 @@
 		loadNotifications();
 		loadDashboardStats();
 
+		// Poll dashboard stats every 30s for real-time balance + overdue updates
+		const statsInterval = window.setInterval(loadDashboardStats, 30000);
+
+		// Poll notifications every 30s
+		const notifInterval = window.setInterval(async () => {
+			try { await loadNotifications(); } catch {}
+		}, 30000);
+
 		// Global Ctrl+E shortcut
 		function onKeydown(e: KeyboardEvent) {
 			if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
@@ -55,8 +63,10 @@
 		}
 		document.addEventListener('keydown', onKeydown as any);
 
-		// Cleanup listener is done by Svelte when component is destroyed
-	});
+		onDestroy(() => {
+			clearInterval(statsInterval);
+			clearInterval(notifInterval);
+		});
 
 	async function loadNotifications() {
 		try {

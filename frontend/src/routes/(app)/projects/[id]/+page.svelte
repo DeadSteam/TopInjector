@@ -155,6 +155,78 @@
 	let bulkDeleteSelected = $state(false);
 	let bulkLoading = $state(false);
 
+	// CSV Import state
+	let showImportModal = $state(false);
+	let importPreview: any[] = [];
+	let importLoading = $state(false);
+	let importCreated = $state(0);
+	let importSkipped = $state(0);
+
+	function handleImportFile(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = (e) => {
+			const text = e.target?.result as string;
+			parseCsvPreview(text);
+		};
+		reader.readAsText(file);
+		input.value = ""; // reset so same file can be re-selected
+	}
+
+	function parseCsvPreview(csvText: string) {
+		const lines = csvText.trim().split(/\r?\n/);
+		if (lines.length < 2) {
+			error = "CSV файл должен содержать заголовок и хотя бы одну строку данных";
+			return;
+		}
+		const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
+		importPreview = [];
+		for (let i = 1; i < Math.min(lines.length, 51); i++) { // max 50 preview rows
+			const cols = lines[i].split(",").map(c => c.trim().replace(/^["']|["']$/g, ""));
+			if (cols.length < 2) continue;
+			const row: Record<string, string> = {};
+			headers.forEach((h, idx) => { row[h] = cols[idx] || ""; });
+			importPreview.push(row);
+		}
+		showImportModal = true;
+		importCreated = 0;
+		importSkipped = 0;
+	}
+
+	async function executeImport() {
+		if (importPreview.length === 0) return;
+		// Build CSV with standard headers the backend expects
+		const header = "text,url";
+		const rows = importPreview.map(row => {
+			const text = (row["text"] || row["Текст"] || "").trim();
+			const url = (row["url"] || "").trim();
+			if (!text) return null;
+			return `"${text.replace(/"/g, '""')}","${url}"`;
+		}).filter(Boolean);
+
+		const csvBody = [header, ...rows].join("\n");
+		importLoading = true;
+		try {
+			const result = await api.projects.importQueries(projectId, csvBody);
+			importCreated = result.created || 0;
+			importSkipped = result.skipped || 0;
+		} catch (err) {
+			error = err instanceof Error ? err.message : "Ошибка импорта CSV";
+		} finally {
+			importLoading = false;
+		}
+	}
+
+	function resetImport() {
+		showImportModal = false;
+		importPreview = [];
+		importCreated = 0;
+		importSkipped = 0;
+	}
+
+
 	// Task detail modal (queue drill-down)
 	let showTaskDetail = $state(false);
 	let taskDetail: any = null;
@@ -1849,6 +1921,64 @@
 					{/each}
 				</div>
 			{/if}
+		{/if}
+	</div>
+</div>
+</div>
+{/if}
+<!-- CSV Import Modal -->
+{#if showImportModal}
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onclick={(e) => { if (e.target === e.currentTarget) resetImport(); }}>
+<div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full m-4 max-h-[90vh] overflow-y-auto">
+	<div class="flex items-center justify-between p-4 border-b border-gray-200">
+		<h3 class="text-lg font-semibold text-gray-900">Импорт запросов из CSV</h3>
+		<button onclick={resetImport} class="text-gray-400 hover:text-gray-600">&times;</button>
+	</div>
+	<div class="p-4 space-y-4">
+		{#if !importLoading && importPreview.length > 0 && importCreated === 0}
+			<div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+				Найдено {importPreview.length} строк для импорта. Формат: первый столбец = текст запроса, второй = URL целевой страницы.
+			</div>
+			<div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+				<table class="w-full text-xs">
+					<thead class="bg-gray-50 sticky top-0">
+						<tr>
+							<th class="px-3 py-2 text-left font-medium text-gray-600">Текст запроса</th>
+							<th class="px-3 py-2 text-left font-medium text-gray-600">URL</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each importPreview as row}
+						<tr class="border-t border-gray-100 hover:bg-gray-50">
+							<td class="px-3 py-2 text-gray-900 truncate max-w-[300px]">{row["text"] || row["Текст"]}</td>
+							<td class="px-3 py-2 text-gray-500 truncate max-w-[200px]">{row["url"]}</td>
+						</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+			<div class="flex gap-2 pt-2">
+				<button onclick={resetImport} class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Отмена</button>
+				<button onclick={executeImport} class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">Импортировать</button>
+			</div>
+		{/if}
+
+		{#if importLoading}
+			<div class="text-center py-8 text-gray-500">
+				<p class="font-medium">Импорт...</p>
+				<p class="text-xs text-gray-400 mt-1">Обработка {importPreview.length} строк</p>
+			</div>
+		{/if}
+
+		{#if importCreated > 0}
+			<div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+				<p class="font-medium">Импорт завершён</p>
+				<p class="text-xs mt-1">Создано: {importCreated} | Пропущено: {importSkipped}</p>
+			</div>
+			<div class="flex gap-2 pt-2">
+				<button onclick={resetImport} class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Закрыть</button>
+				<button onclick={() => { resetImport(); loadQueries(); }} class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Обновить список</button>
+			</div>
 		{/if}
 	</div>
 </div>
