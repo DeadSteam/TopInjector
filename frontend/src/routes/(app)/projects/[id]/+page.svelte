@@ -100,6 +100,7 @@
 
 	// Project settings state
 	let settingIntegration = $state("default");
+	let availableIntegrations: Array<{key: string; label: string}> = [];
 	let settingScheduleStart = $state("");
 	let settingScheduleEnd = $state("");
 	let settingModsCapital = $state(false);
@@ -845,6 +846,11 @@
 			settingModsTrailingSpace = !!qm.trailing_space;
 			settingsSaved = false;
 			loadAutoStop();
+			// Load available integrations dynamically
+			try {
+				const integData = await api.projects.integrations();
+				availableIntegrations = (integData.integrations || []).map((i: any) => ({ key: i.key, label: i.label }));
+			} catch {}
 		}
 		if (tab === "analytics") loadProjectAnalytics();
 		if (tab === "delegates") loadDelegates();
@@ -1623,10 +1629,9 @@
 				<div class="mb-6">
 					<label class="block text-sm font-medium text-gray-700 mb-1">Интеграция</label>
 					<select bind:value={settingIntegration} class="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-						<option value="default">Default (без интеграции)</option>
-						<option value="integration_2">Integration 2</option>
-						<option value="integration_1_testing">Integration 1 (testing)</option>
-						<option value="main_bay_belarus">Main Bay Belarus</option>
+						{#each availableIntegrations as integration}
+							<option value={integration.key}>{integration.label}</option>
+						{/each}
 					</select>
 				</div>
 

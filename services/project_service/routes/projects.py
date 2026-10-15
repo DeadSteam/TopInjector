@@ -62,6 +62,15 @@ async def _get_project_or_404(
     return project
 
 
+async def _user_id_from_request(request: Request) -> UUID | None:
+    """Extract user_id from Authorization header without raising 401."""
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:]
+    return decode_access_token(token)
+
+
 # --------------------------------------------------------------------------- #
 #  Project Groups                                                             #
 # --------------------------------------------------------------------------- #
@@ -144,6 +153,51 @@ async def delete_group(
 
 
 # --------------------------------------------------------------------------- #
+#  Integrations (available types)                                             #
+# --------------------------------------------------------------------------- #
+
+# Canonical list of available integrations, sourced from config + database presets
+_AVAILABLE_INTEGRATIONS: list[dict] = [
+    {"key": "default", "label": "Default (без интеграции)", "description": "Стандартная настройка без внешней интеграции"},
+    {"key": "google-search-console", "label": "Google Search Console", "description": "Интеграция с Google Search Console"},
+    {"key": "yandex-webmaster", "label": "Яндекс Вебмастер", "description": "Интеграция с Яндекс.Вебмастер"},
+    {"key": "custom", "label": "Custom URL", "description": "Произвольный URL для индексации"},
+]
+
+@router.get("/integrations")
+async def list_integrations(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return available integration types for the current user."""
+    # Load any custom integrations from projects that have non-default integrations
+    from services.project_service.domain.models import Project as _Project
+
+    existing_integrations_result = await session.execute(
+        select(_Project.integrations)
+        .where(
+            and_(  # type: ignore[arg-type]
+                _Project.integrations.isnot(None),
+                cast(_Project.integrations['integration_type'], sa_text).astext != 'default',
+            )
+        )
+    )
+    custom_keys: set[str] = set()
+    for (integ,) in existing_integrations_result.all():
+        if integ and isinstance(integ, dict):
+            key = integ.get("integration_type")
+            if key and key != "default":
+                custom_keys.add(key)
+
+    # Build full list: defaults + custom integrations from projects
+    integrations = list(_AVAILABLE_INTEGRATIONS)
+    for key in sorted(custom_keys):
+        integrations.append({"key": key, "label": key, "description": "Кастомная интеграция"})
+
+    return {"integrations": integrations}
+
+
+# --------------------------------------------------------------------------- #
 #  Projects                                                                   #
 # --------------------------------------------------------------------------- #
 
@@ -204,11 +258,14 @@ async def create_project(
 
 @router.get("/")
 async def list_projects(
+    request: Request,
     search: str | None = Query(default=None),
     group_id: str | None = Query(default=None),
     region: str | None = Query(default=None),
     strategy_type: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
+    only_delegated: str | None = Query(default=None),
+    delegated_by: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     project_repo: ProjectRepository = Depends(_project_repo),
@@ -240,6 +297,28 @@ async def list_projects(
         count_conditions.append(Project.is_active == is_active)
         filter_conditions.append(Project.is_active == is_active)
 
+    # --- Access filters (delegation) — only applied if user is authenticated ---
+    req_user_id = await _user_id_from_request(request)
+
+    if only_delegated and req_user_id:
+        # Show only projects delegated TO the current user
+        delegated_to_subq = (
+            select(ProjectDelegate.project_id)
+            .where(ProjectDelegate.delegate_user_id == req_user_id)
+            .scalar_subquery()
+        )
+        count_conditions.append(Project.id == delegated_to_subq)
+        filter_conditions.append(Project.id == delegated_to_subq)
+
+    if delegated_by and req_user_id:
+        # Show only projects where current user is the inviter (delegated BY current user)
+        delegated_by_subq = (
+            select(ProjectDelegate.project_id)
+            .where(ProjectDelegate.inviter_user_id == req_user_id)
+            .scalar_subquery()
+        )
+        count_conditions.append(Project.id == delegated_by_subq)
+        filter_conditions.append(Project.id == delegated_by_subq)
     # Count total matching projects
     count_stmt = select(func.count()).select_from(Project).where(*filter_conditions)
     total = (await session.execute(count_stmt)).scalar() or 0

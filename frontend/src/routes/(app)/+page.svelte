@@ -38,7 +38,10 @@
 	let filterStrategy = $state<string>("all");
 	let filterActive = $state<string>("all");
 	let filterIntegration = $state<string>("all");
-	let filterAccess = $state<string>("all"); // own, delegated-to, all
+	let filterAccess = $state<string>("all"); // own, delegated-to, delegated-by
+
+	// Integrations (dynamic from backend)
+	let availableIntegrations = $state<Array<{key: string; label: string}>>([]);
 
 	// Column visibility
 	let showRegionCol = $state(true);
@@ -218,11 +221,20 @@
 
 	async function loadData() {
 		try {
-			await Promise.all([loadGroups(), loadProjects()]);
+			await Promise.all([loadGroups(), loadProjects(), loadIntegrations()]);
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки";
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadIntegrations() {
+		try {
+			const data = await api.projects.integrations();
+			availableIntegrations = (data.integrations || []).map((i: any) => ({ key: i.key, label: i.label }));
+		} catch {
+			availableIntegrations = [{ key: "default", label: "Default (без интеграции)" }];
 		}
 	}
 
@@ -249,6 +261,7 @@
 		if (filterActive !== "all") params.is_active = filterActive === "true";
 		if (filterIntegration !== "all" && filterIntegration !== "") params.integration_type = filterIntegration;
 		if (filterAccess === "delegated-to") params.only_delegated = "true";
+		if (filterAccess === "delegated-by") params.delegated_by = "true";
 		params.page = currentPage;
 		params.page_size = pageSize;
 
@@ -748,14 +761,15 @@
 
 		<select bind:value={filterIntegration} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			<option value="all">Все интеграции</option>
-			<option value="google-search-console">Google Search Console</option>
-			<option value="yandex-webmaster">Яндекс Вебмастер</option>
-			<option value="custom">Custom URL</option>
+			{#each availableIntegrations as integration}
+				<option value={integration.key}>{integration.label}</option>
+			{/each}
 		</select>
 
 		<select bind:value={filterAccess} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			<option value="all">Все</option>
 			<option value="delegated-to">Делегированные мне</option>
+			<option value="delegated-by">Делегированные мной</option>
 		</select>
 
 		<!-- Column config -->

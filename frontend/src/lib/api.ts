@@ -89,7 +89,7 @@ export const api = {
 		},
 	},
 	projects: {
-		list: (params?: { search?: string; group_id?: string; region?: string; strategy_type?: string; is_active?: boolean; page?: number; page_size?: number }) => {
+		list: (params?: { search?: string; group_id?: string; region?: string; strategy_type?: string; is_active?: boolean; only_delegated?: string; delegated_by?: string; page?: number; page_size?: number }) => {
 			let path = "/api/projects/";
 			if (params) {
 				const qs = new URLSearchParams();
@@ -98,6 +98,8 @@ export const api = {
 				if (params.region) qs.set("region", params.region);
 				if (params.strategy_type) qs.set("strategy_type", params.strategy_type);
 				if (params.is_active !== undefined) qs.set("is_active", String(params.is_active));
+				if (params.only_delegated) qs.set("only_delegated", params.only_delegated);
+				if (params.delegated_by) qs.set("delegated_by", params.delegated_by);
 				if (params.page) qs.set("page", String(params.page));
 				if (params.page_size) qs.set("page_size", String(params.page_size));
 				path += "?" + qs.toString();
@@ -236,6 +238,8 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/auto-stop`, { method: "PUT", body: JSON.stringify(data) }),
 		getAutoStop: (projectId: string) =>
 			fetcher(`/api/projects/${projectId}/auto-stop`),
+		integrations: () =>
+			fetcher("/api/projects/integrations"),
 		geoCodesSearch: (q: string, limit: number = 20) =>
 			fetcher(`/api/projects/geo-codes/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 	},
