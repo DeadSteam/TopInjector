@@ -33,6 +33,9 @@
 	let topRangesData = $state<any>(null);
 	let topRangesLoading = $state(true);
 
+	// Active TOP range filter for interactive buttons
+	let activeTopRange = $state<string>('all');
+
 	// Project selector for scoped analytics
 	let projects = $state<any[]>([]);
 	let selectedProject = $state<string>("");
@@ -199,6 +202,22 @@
 		if (pos <= 3) return '#16a34a'; // green-600
 		if (pos <= 5) return '#2563eb'; // blue-600
 		return '#6b7280'; // gray-500
+	}
+
+	// TOP range toggle buttons data
+	const topRangeButtons = [
+		{ label: 'Все', value: 'all' },
+		{ label: 'TOP 3', value: '0-3' },
+		{ label: 'TOP 5', value: '0-5' },
+		{ label: 'TOP 10', value: '0-10' },
+		{ label: 'TOP 20', value: '0-20' },
+		{ label: 'TOP 50', value: '0-50' },
+	];
+
+	// Compute percentage for a single range out of total clicks
+	function topRangePct(range: any): number {
+		if (!range || !topRangesData?.total_clicks || topRangesData.total_clicks === 0) return 0;
+		return (range.clicks / topRangesData.total_clicks) * 100;
 	}
 
 	// Format date for display
@@ -405,6 +424,19 @@
 	<!-- TOP ranges chart -->
 	<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
 		<h3 class="font-medium text-gray-900 mb-4">Клики по диапазону позиций</h3>
+
+		<!-- TOP range toggle buttons -->
+		{#if topRangesData && topRangesData.ranges.length > 0}
+		<div class="flex gap-2 mb-4 flex-wrap">
+			{#each topRangeButtons as btn}
+				<button
+					onclick={() => activeTopRange = btn.value}
+					class="px-3 py-1.5 text-sm rounded-lg transition-colors {activeTopRange === btn.value ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+					{btn.label}
+				</button>
+			{/each}
+		</div>
+		{/if}
 
 		{#if topRangesLoading}
 			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">Загрузка...</div>
