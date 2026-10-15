@@ -329,6 +329,8 @@ export const api = {
 				method: "POST",
 				body: JSON.stringify({ name }),
 			}),
+		deleteToken: (id: string) =>
+			fetcher(`/api/users/api-tokens/${id}`, { method: "DELETE" }),
 		messengerSettings: () => fetcher("/api/users/settings/messenger"),
 		updateMessengerSettings: (data: any) =>
 			fetcher("/api/users/settings/messenger", { method: "POST", body: JSON.stringify(data) }),

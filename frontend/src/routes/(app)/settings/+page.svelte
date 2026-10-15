@@ -69,6 +69,17 @@
 		setTimeout(() => (copiedToken = ""), 2000);
 	}
 
+	async function deleteUserToken(id: string, tokenStr: string) {
+		if (!confirm("Удалить этот токен?")) return;
+		try {
+			await api.users.deleteToken(id);
+			apiTokens = apiTokens.filter(t => t.id !== id);
+			copiedToken = copiedToken === tokenStr ? "" : copiedToken;
+		} catch (err) {
+			error = err instanceof Error ? err.message : "Ошибка удаления токена";
+		}
+	}
+
 	onMount(() => { loadSettings(); });
 
 	async function loadMessenger() {
@@ -297,9 +308,12 @@
 									<p class="text-sm font-medium">{token.name}</p>
 									<p class="text-xs font-mono text-gray-500">{token.token || token.id}</p>
 								</div>
-								<button onclick={() => copyToken(token.token || token.id)} class="px-3 py-1 border border-gray-300 rounded-lg text-xs hover:bg-gray-100 transition-colors">
-									{copiedToken === (token.token || token.id) ? 'Скопировано!' : 'Копировать'}
-								</button>
+								<div class="flex gap-2">
+									<button onclick={() => copyToken(token.token || token.id)} class="px-3 py-1 border border-gray-300 rounded-lg text-xs hover:bg-gray-100 transition-colors">
+										{copiedToken === (token.token || token.id) ? 'Скопировано!' : 'Копировать'}
+									</button>
+									<button onclick={() => deleteUserToken(token.id, token.token || token.id)} class="px-3 py-1 border border-red-300 text-red-600 rounded-lg text-xs hover:bg-red-50 transition-colors">Удалить</button>
+								</div>
 							</div>
 						{/each}
 					</div>

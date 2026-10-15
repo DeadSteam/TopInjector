@@ -99,6 +99,29 @@ async def create_api_token(
     }
 
 
+@router.delete("/api-tokens/{token_id}")
+async def delete_api_token(
+    token_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete an API token. Requires valid JWT."""
+    from services.project_service.domain.models import ProjectToken
+
+    result = await session.execute(
+        select(ProjectToken).where(
+            ProjectToken.id == UUID(token_id),
+            ProjectToken.user_id == user.id,
+        )
+    )
+    token = result.scalar_one_or_none()
+    if not token:
+        raise HTTPException(status_code=404, detail="Token not found")
+    await session.delete(token)
+    await session.commit()
+    return {"deleted": True}
+
+
 # --- User settings: messenger, external services, password ------------------ #
 
 

@@ -171,6 +171,11 @@
 	let showBulkEditModal = $state(false);
 	let bulkEditDailyLimit = $state(0);
 	let bulkEditRegion = $state("");
+	let showBulkDelegateModal = $state(false);
+	let bulkDelegateUserId = $state("");
+	let bulkDelegateRole = $state("view");
+	let showBulkAutoStopModal = $state(false);
+	let bulkAutoStopAt = $state("");
 	let showMultigeoBuilder = $state(false);
 	// Multigeo regions: [{region: string, percentage: number}]
 	let multigeoRegions = $state<Array<{ region: string; percentage: number }>>([]);
@@ -451,6 +456,54 @@
 			error = err instanceof Error ? err.message : 'Ошибка bulk-редактирования';
 		}
 	}
+
+	function bulkDelegateSelected() {
+		if (selectedProjectIds.length === 0) return;
+		showBulkDelegateModal = true;
+		bulkDelegateUserId = "";
+		bulkDelegateRole = "view";
+	}
+
+	async function confirmBulkDelegate() {
+		if (!bulkDelegateUserId.trim() || selectedProjectIds.length === 0) return;
+		try {
+			await api.projects.bulkDelegate({
+				project_ids: [...selectedProjectIds],
+				delegate_user_id: bulkDelegateUserId.trim(),
+				role: bulkDelegateRole,
+			});
+			selectedProjectIds = [];
+			showBulkToolbar = false;
+			showBulkDelegateModal = false;
+			bulkDelegateUserId = "";
+			await loadProjects();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Ошибка bulk-делегирования';
+		}
+	}
+
+	function bulkAutoStopSelected() {
+		if (selectedProjectIds.length === 0) return;
+		showBulkAutoStopModal = true;
+		bulkAutoStopAt = "";
+	}
+
+	async function confirmBulkAutoStop() {
+		if (selectedProjectIds.length === 0) return;
+		try {
+			for (const pid of selectedProjectIds) {
+				await api.projects.autoStop(pid, { auto_stop_at: bulkAutoStopAt || null });
+			}
+			selectedProjectIds = [];
+			showBulkToolbar = false;
+			showBulkAutoStopModal = false;
+			bulkAutoStopAt = "";
+			await loadProjects();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Ошибка авто-стопа';
+		}
+	}
+
 
 
 	function showContextMenu(e: MouseEvent, projectId: string) {
@@ -900,7 +953,10 @@
 			<button onclick={bulkEditSelected} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
 				Редактировать
 			</button>
-			<button onclick={bulkDeleteSelected} class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors">
+			<button onclick={bulkDelegateSelected} class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors">Делегировать</button>
+			<button onclick={bulkAutoStopSelected} class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded-lg transition-colors">Авто-стоп</button>
+			<button onclick={bulkDeleteSelected} class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors">Удалить</button>
+			<div class="h-6 w-px bg-gray-700"></div>
 				Удалить
 			</button>
 			<div class="h-6 w-px bg-gray-700"></div>
@@ -1122,6 +1178,50 @@
 					</div>
 				</div>
 			</div>
+		{/if}
+
+		{#if showBulkDelegateModal}
+		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+			<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Делегировать {selectedProjectIds.length} проектов</h2>
+				<form onsubmit={(e) => { e.preventDefault(); confirmBulkDelegate(); }} class="space-y-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">ID пользователя</label>
+						<input type="text" bind:value={bulkDelegateUserId} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Введите UserID" required />
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Роль</label>
+						<select bind:value={bulkDelegateRole} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+							<option value="view">Только просмотр</option>
+							<option value="edit">Редактирование</option>
+						</select>
+					</div>
+					<div class="flex justify-end gap-3 mt-6">
+						<button type="button" onclick={() => { showBulkDelegateModal = false; }} class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors">Отмена</button>
+						<button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors">Делегировать</button>
+					</div>
+				</form>
+			</div>
+		</div>
+		{/if}
+
+		{#if showBulkAutoStopModal}
+		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+			<div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Авто-стоп {selectedProjectIds.length} проектов</h2>
+				<form onsubmit={(e) => { e.preventDefault(); confirmBulkAutoStop(); }} class="space-y-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Дата остановки (оставьте пустым для отмены)</label>
+						<input type="datetime-local" bind:value={bulkAutoStopAt} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+					</div>
+					<p class="text-xs text-gray-500">Проекты остановятся автоматически в указанное время. Оставьте пустым — отключить авто-стоп.</p>
+					<div class="flex justify-end gap-3 mt-6">
+						<button type="button" onclick={() => { showBulkAutoStopModal = false; }} class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors">Отмена</button>
+						<button type="submit" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium transition-colors">Применить</button>
+					</div>
+				</form>
+			</div>
+		</div>
 		{/if}
 
 		{#if showGroupModal}
