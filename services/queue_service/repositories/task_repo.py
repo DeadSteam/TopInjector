@@ -2,9 +2,10 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import cast, delete, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.project_service.domain.models import Project as _ProjectModel
 from services.queue_service.domain.models import QueueTask
 
 
@@ -20,10 +21,11 @@ class QueueTaskRepository:
         status: str | None = None,
         from_date: str | None = None,
         to_date: str | None = None,
+        integration: str | None = None,
     ) -> list[QueueTask]:
         from datetime import datetime, timezone
 
-        query = select(QueueTask)
+        query = select(QueueTask).join(_ProjectModel, QueueTask.project_id == _ProjectModel.id)
         if project_id:
             query = query.where(QueueTask.project_id == project_id)
         if status:
@@ -40,6 +42,10 @@ class QueueTaskRepository:
                 query = query.where(QueueTask.created_at <= td)
             except (ValueError, TypeError):
                 pass
+        if integration:
+            query = query.where(
+                cast(_ProjectModel.integrations["integration_type"], sa_text).astext == integration  # type: ignore[literal-required, union-attr]
+            )
         result = await self._session.execute(query.order_by(QueueTask.created_at))
         return list(result.scalars().all())
 

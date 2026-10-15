@@ -16,6 +16,7 @@
 	let tasks = $state<QueueTask[]>([]);
 	let filterStatus = $state<string>("all");
 	let filterSource = $state<string>("all");
+	let filterIntegration = $state<string>("");
 	let loading = $state(true);
 	let error = $state("");
 	let stats = $state({ pending: 0, in_progress: 0, completed: 0, not_found: 0, stuck: 0 });
@@ -26,6 +27,7 @@
 	let taskDetail = $state<QueueTask | null>(null);
 
 	// Filters: project list + date range
+	let integrations = $state<any[]>([]);
 	let projects = $state<any[]>([]);
 	let filterFromDate = $state("");
 	let filterToDate = $state("");
@@ -41,6 +43,13 @@
 	async function loadProjects() {
 		try {
 			projects = await api.projects.list();
+		} catch { /* ignore */ }
+	}
+
+	async function loadIntegrations() {
+		try {
+			const res = await api.integrations.list();
+			integrations = res.integrations || [];
 		} catch { /* ignore */ }
 	}
 
@@ -71,7 +80,7 @@
 	async function loadQueue() {
 		try {
 			let statusFilter = filterStatus === "all" ? undefined : filterStatus;
-			const data = await api.queue.list(projectId || undefined, statusFilter, filterFromDate || undefined, filterToDate || undefined);
+			const data = await api.queue.list(projectId || undefined, statusFilter, filterFromDate || undefined, filterToDate || undefined, filterIntegration || undefined);
 			tasks = data.tasks || [];
 			updateStats();
 		} catch (err) {
@@ -100,7 +109,7 @@
 
 	function startSSE() {
 		stopSSE();
-		const es = api.queue.feed(projectId || undefined, filterFromDate || undefined, filterToDate || undefined);
+		const es = api.queue.feed(projectId || undefined, filterFromDate || undefined, filterToDate || undefined, filterIntegration || undefined);
 		eventSource = es;
 
 		eventSource.onopen = () => {
@@ -149,6 +158,7 @@
 
 	onMount(() => {
 		loadProjects();
+		loadIntegrations();
 		// loadQueue and startSSE are handled by $effect below
 		refreshInterval = window.setInterval(() => {
 			// Only refresh tasks on interval, SSE reconnects via $effect
@@ -288,6 +298,23 @@
 				Проклик
 			</button>
 		</div>
+
+		<!-- Integration filter -->
+		{#if integrations.length > 0}
+		<div class="mb-4 flex gap-2 flex-wrap">
+			<span class="text-sm text-gray-500 py-1.5">Интеграция:</span>
+			<button onclick={() => { filterIntegration = ""; loadQueue(); }}
+				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === "" ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}'>
+				Все
+			</button>
+			{#each integrations as integ}
+				<button onclick={() => { filterIntegration = integ.key; loadQueue(); }}
+					class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === integ.key ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}" title={integ.description || integ.key}>
+					{integ.label || integ.key}
+				</button>
+			{/each}
+		</div>
+		{/if}
 
 		<!-- Task list -->
 		<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">

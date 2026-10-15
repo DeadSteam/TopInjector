@@ -262,12 +262,13 @@ export const api = {
 			fetcher(`/api/projects/groups/${id}`, { method: "DELETE" }),
 	},
 	queue: {
-		list: (project?: string, status?: string, fromDate?: string, toDate?: string) => {
+		list: (project?: string, status?: string, fromDate?: string, toDate?: string, integration?: string) => {
 			let path = "/api/queue/?";
 			if (project) path += `project_id=${project}&`;
 			if (status) path += `status=${status}&`;
 			if (fromDate) path += `from_date=${encodeURIComponent(fromDate)}&`;
 			if (toDate) path += `to_date=${encodeURIComponent(toDate)}`;
+			if (integration) path += `integration=${encodeURIComponent(integration)}`;
 			return fetcher(path);
 		},
 		push: (data: any) =>
@@ -278,18 +279,20 @@ export const api = {
 			fetcher(`/api/queue/clear?project_id=${projectId}`, { method: "POST" }),
 		proklik: (data: any) =>
 			fetcher("/api/queue/proklik", { method: "POST", body: JSON.stringify(data) }),
-		feed: (projectId?: string, fromDate?: string, toDate?: string) => {
+		feed: (projectId?: string, fromDate?: string, toDate?: string, integration?: string) => {
 			let url = `${BASE_URL}/api/queue/feed`;
 			const params = new URLSearchParams();
 			if (projectId) params.set("project_id", projectId);
 			if (fromDate) params.set("from_date", fromDate);
 			if (toDate) params.set("to_date", toDate);
+			if (integration) params.set("integration", integration);
 			if (params.toString()) url += "?" + params.toString();
 			return new EventSource(url);
 		},
-		stats: (projectId?: string) => {
+		stats: (projectId?: string, integration?: string) => {
 			let path = "/api/queue/stats";
 			if (projectId) path += `?project_id=${projectId}`;
+			if (integration) path += `${projectId ? '&' : '?'}integration=${encodeURIComponent(integration)}`;
 			return fetcher(path);
 		},
 		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),

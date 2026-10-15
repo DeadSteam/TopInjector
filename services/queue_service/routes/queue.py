@@ -51,11 +51,12 @@ async def list_tasks(
     status: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
+    integration: str | None = None,
     task_repo: QueueTaskRepository = Depends(_task_repo),
 ):
-    """List queue tasks with optional filters including date range."""
+    """List queue tasks with optional filters including date range and integration type."""
     pid = UUID(project_id) if project_id else None
-    tasks = await task_repo.get_all(pid, status, from_date, to_date)
+    tasks = await task_repo.get_all(pid, status, from_date, to_date, integration)
     return [
         {
             "id": str(t.id),
@@ -105,6 +106,7 @@ async def queue_feed(
     project_id: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
+    integration: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     """Server-Sent Events feed for real-time queue status updates."""
@@ -113,9 +115,17 @@ async def queue_feed(
         while True:
             try:
                 pid = UUID(project_id) if project_id else None
-                from sqlalchemy import func, select as sa_select
+                from sqlalchemy import cast, func, select as sa_select
 
                 query = sa_select(QueueTask.status, func.count())
+                if integration:
+                    from services.project_service.domain.models import Project as _ProjectModel
+
+                    query = query.join(
+                        _ProjectModel, QueueTask.project_id == _ProjectModel.id
+                    ).where(
+                        cast(_ProjectModel.integrations["integration_type"], sa_text).astext == integration  # type: ignore[literal-required, union-attr]
+                    )
                 if pid:
                     query = query.where(QueueTask.project_id == pid)
                 if from_date:
@@ -157,10 +167,19 @@ async def queue_feed(
 @router.get("/stats")
 async def get_queue_stats(
     project_id: str | None = None,
+    integration: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Get current queue statistics."""
+    """Get current queue statistics with optional integration filter."""
+    from services.project_service.domain.models import Project as _ProjectModel
+
     query = sa_select(QueueTask.status, func.count())
+    if integration:
+        query = query.join(
+            _ProjectModel, QueueTask.project_id == _ProjectModel.id
+        ).where(
+            cast(_ProjectModel.integrations["integration_type"], sa_text).astext == integration  # type: ignore[literal-required, union-attr]
+        )
     if project_id:
         query = query.where(QueueTask.project_id == UUID(project_id))
     query = query.group_by(QueueTask.status)
