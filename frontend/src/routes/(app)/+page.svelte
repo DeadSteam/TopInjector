@@ -869,8 +869,13 @@
 								{#if showStrategyCol}
 									<td class="px-4 py-3">
 										<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium
-											{project.strategy_type === 'daily' ? 'bg-blue-100 text-blue-800' : project.strategy_type === 'monthly' ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'}">
-											{project.strategy_type}
+											{project.strategy_type === 'daily' ? 'bg-blue-100 text-blue-800' : project.strategy_type === 'monthly' ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'}"
+											title={project.strategy_type === 'daily' ? 'Ежедневно' : project.strategy_type === 'monthly' ? 'Ежемесячно' : 'Ежечасно'}>
+											{#if project.strategy_type === 'hourly'}ч
+											{:else if project.strategy_type === 'daily'}д
+											{:else if project.strategy_type === 'monthly'}м
+											{:else}{project.strategy_type}
+											{/if}
 										</span>
 									</td>
 								{/if}
