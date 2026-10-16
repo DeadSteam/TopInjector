@@ -2343,3 +2343,34 @@ async def search_geo_codes(
         for c in codes
     ]
 
+
+# --- Admin Panel stats ------------------------------------------------------- #
+
+@router.get("/admin/stats")
+async def admin_stats(session: AsyncSession = Depends(get_session)):
+    """Get system-wide admin statistics (total users, projects, balance, queue)."""
+    from services.auth_service.domain.models import User as _UserModel
+    from services.queue_service.domain.models import QueueTask as _QueueTaskModel
+
+    total_users = (await session.execute(select(func.count(_UserModel.id)))).scalar() or 0
+    total_projects = (await session.execute(select(func.count(Project.id)))).scalar() or 0
+    active_projects = (await session.execute(select(func.count(Project.id)).where(Project.is_active == True))).scalar() or 0  # noqa: E712
+
+    from services.project_service.domain.models import BalanceTransaction as _BTModel
+    total_balance_kopeks = (await session.execute(select(func.coalesce(func.sum(_BTModel.amount), 0)))).scalar() or 0
+
+    task_counts = {}
+    for status in ("pending", "in_progress", "completed", "not_found", "stuck"):
+        c = (await session.execute(
+            select(func.count(_QueueTaskModel.id)).where(_QueueTaskModel.status == status)
+        )).scalar() or 0
+        task_counts[status] = c
+
+    return {
+        "total_users": total_users,
+        "total_projects": total_projects,
+        "active_projects": active_projects,
+        "total_balance_credits": round(total_balance_kopeks / 100, 2),
+        "queue_tasks": task_counts,
+    }
+

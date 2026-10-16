@@ -182,3 +182,28 @@ class GeoCodePreset(UUIDModel):
         UniqueConstraint("city_name", "region_name", name="uq_geo_code_preset_city_region"),
     )
 
+
+class WarmupCampaign(UUIDModel):
+    """Pre-heating campaign for simulating natural search traffic."""
+
+    __tablename__ = "warmup_campaigns"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    project_name: Mapped[str | None] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")  # draft/active/paused/completed/cancelled
+    clicks_per_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    total_target: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    completed_clicks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_warmup_campaign_user_name"),
+    )
+

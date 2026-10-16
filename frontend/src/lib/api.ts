@@ -242,6 +242,22 @@ export const api = {
 			fetcher("/api/projects/integrations"),
 		geoCodesSearch: (q: string, limit: number = 20) =>
 			fetcher(`/api/projects/geo-codes/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+		adminStats: () => fetcher("/api/projects/admin/stats"),
+	},
+	warmups: {
+		list: (projectId?: string) => {
+			let path = "/api/warmups";
+			if (projectId) path += `?project_id=${encodeURIComponent(projectId)}`;
+			return fetcher(path);
+		},
+		create: (data: any) =>
+			fetcher("/api/warmups", { method: "POST", body: JSON.stringify(data) }),
+		update: (id: string, data: any) =>
+			fetcher(`/api/warmups/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+		delete: (id: string) =>
+			fetcher(`/api/warmups/${id}`, { method: "DELETE" }),
+		tick: (id: string) =>
+			fetcher(`/api/warmups/${id}/tick`, { method: "POST" }),
 	},
 	balance: {
 		get: (projectId: string) => fetcher(`/api/projects/${projectId}/balance`),
@@ -345,6 +361,13 @@ export const api = {
 		externalServices: () => fetcher("/api/users/settings/external-services"),
 		updateExternalServices: (data: any) =>
 			fetcher("/api/users/settings/external-services", { method: "POST", body: JSON.stringify(data) }),
+		stopWords: () => fetcher("/api/users/settings/stop-words"),
+		updateStopWords: (words: string[]) =>
+			fetcher("/api/users/settings/stop-words", { method: "POST", body: JSON.stringify({ stop_words: words }) }),
+		addStopWord: (word: string) =>
+			fetcher("/api/users/settings/stop-words/add", { method: "POST", body: JSON.stringify({ word }) }),
+		removeStopWord: (word: string) =>
+			fetcher(`/api/users/settings/stop-words/${encodeURIComponent(word)}`, { method: "DELETE" }),
 		changePassword: (data: any) =>
 			fetcher("/api/users/password", { method: "POST", body: JSON.stringify(data) }),
 		uploadAvatar: (data: { avatar_url: string }) =>

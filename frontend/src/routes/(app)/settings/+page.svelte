@@ -30,6 +30,16 @@
 	let confirmNewPassword = $state("");
 	let passwordChanged = $state(false);
 
+	// Stop words management
+	let stopWords = $state<string[]>([]);
+	let newStopWord = $state("");
+
+	// Admin panel stats
+	let adminStats = $state<{ total_users: number; total_projects: number; active_projects: number; total_balance_credits: number; queue_tasks: Record<string, number> }>({
+		total_users: 0, total_projects: 0, active_projects: 0, total_balance_credits: 0, queue_tasks: {}
+	});
+	let loadingAdmin = $state(true);
+
 	async function loadSettings() {
 		try {
 			profile = await api.users.profile();
@@ -137,7 +147,32 @@
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка смены пароля"; }
 	}
 
-	onMount(() => { loadSettings(); loadMessenger(); loadExternalServices(); });
+	async function loadStopWords() {
+		try { const data = await api.users.stopWords(); stopWords = data.stop_words || []; } catch {}
+	}
+
+	async function addStopWord() {
+		if (!newStopWord.trim()) return;
+		const existing = newStopWord.toLowerCase().trim();
+		if (stopWords.includes(existing)) return;
+		const res: any = await api.users.addStopWord(newStopWord.trim());
+		stopWords = res.stop_words || [];
+		newStopWord = "";
+	}
+
+	async function removeStopWord(word: string) {
+		await api.users.removeStopWord(word);
+		stopWords = stopWords.filter(w => w !== word);
+	}
+
+	async function loadAdminStats() {
+		try {
+			const stats = await api.admin.stats();
+			adminStats = stats;
+		} catch {} finally { loadingAdmin = false; }
+	}
+
+	onMount(() => { loadStopWords(); loadAdminStats(); });
 </script>
 
 <div class="p-6">
@@ -340,6 +375,71 @@
 						Изменить план
 					</button>
 				</div>
+			</div>
+
+			<!-- Stop words management -->
+			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Словофильтр (стоп-слова)</h2>
+				<p class="text-sm text-gray-500 mb-3">Запросы, содержащие эти слова, исключаются из генерации задач.</p>
+
+				<form onsubmit={(e) => { e.preventDefault(); addStopWord(); }} class="flex gap-2 mb-4">
+					<input type="text" bind:value={newStopWord} placeholder="Введите стоп-слово..." class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+				 <button type="submit" disabled={stopWords.includes(newStopWord.toLowerCase().trim())} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors">Добавить</button>
+				</form>
+
+				{#if stopWords.length > 0}
+					<div class="space-y-2">
+						{#each stopWords as word}
+							<div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+								<code class="text-sm text-gray-700">{word}</code>
+								<button onclick={() => removeStopWord(word)} class="px-3 py-1 border border-red-300 text-red-600 rounded-lg text-xs hover:bg-red-50 transition-colors">Удалить</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-sm text-gray-400">Список пуст — добавьте слова для фильтрации.</p>
+				{/if}
+			</div>
+
+			<!-- Admin panel -->
+			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Админ-панель</h2>
+				{#if loadingAdmin}
+					<p class="text-sm text-gray-400">Загрузка...</p>
+				{:else}
+					<div class="grid grid-cols-2 gap-4 mb-4">
+						<div class="bg-gray-50 rounded-lg p-3">
+							<p class="text-xs text-gray-500">Всего пользователей</p>
+							<p class="text-xl font-bold text-gray-900">{adminStats.total_users}</p>
+						</div>
+						<div class="bg-gray-50 rounded-lg p-3">
+							<p class="text-xs text-gray-500">Всего проектов</p>
+							<p class="text-xl font-bold text-gray-900">{adminStats.total_projects}</p>
+						</div>
+						<div class="bg-gray-50 rounded-lg p-3">
+							<p class="text-xs text-gray-500">Активных проектов</p>
+							<p class="text-xl font-bold text-green-600">{adminStats.active_projects}</p>
+						</div>
+						<div class="bg-gray-50 rounded-lg p-3">
+							<p class="text-xs text-gray-500">Баланс (₽)</p>
+							<p class="text-xl font-bold text-blue-600">{adminStats.total_balance_credits}</p>
+						</div>
+					</div>
+
+					<div class="bg-gray-50 rounded-lg p-3 mb-4">
+						<h4 class="text-sm font-medium text-gray-700 mb-2">Очередь задач</h4>
+						{#if adminStats.queue_tasks}
+							<div class="space-y-1">
+								{#each Object.entries(adminStats.queue_tasks) as [status, count]}
+									<div class="flex justify-between text-sm">
+										<span class="text-gray-600">{status}</span>
+										<span class="font-medium">{count}</span>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/if}

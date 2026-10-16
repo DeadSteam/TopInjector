@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
         notifications as notification_router,
     )
     from services.external_api_service.routes import external as external_router
+    from services.project_service.routes import warmups as warmup_router
 
     # Prefixes live here only; module routers declare paths relative to them.
     app.include_router(auth_router.router, prefix="/api/auth")
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router.router, prefix="/api/analytics")
     app.include_router(notification_router.router, prefix="/api/notifications")
     app.include_router(external_router.router, prefix="/api/external/v1")
+    app.include_router(warmup_router.router, prefix="/api/warmups")
 
     @app.get("/health")
     async def health():

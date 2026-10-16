@@ -277,3 +277,97 @@ async def get_avatar(
     """Get current avatar URL."""
     av = getattr(user, "avatar_url", None)
     return {"avatar_url": av}
+
+
+# --- Stop words management -------------------------------------------------- #
+
+
+@router.get("/settings/stop-words")
+async def get_stop_words(
+    user: User = Depends(get_current_user),
+):
+    """Get user's stop words list (JSONB in user settings)."""
+    settings: dict = getattr(user, "messenger_settings", {}) or {}
+    return {"stop_words": settings.get("stop_words", [])}
+
+
+@router.post("/settings/stop-words")
+async def update_stop_words(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update user's stop words list. Accepts {stop_words: [...]}."""
+    from services.auth_service.domain.models import User as UserModel
+
+    current = getattr(user, "messenger_settings", {}) or {}
+    words = body.get("stop_words", [])
+    # Deduplicate and lowercase
+    current["stop_words"] = list(set(w.strip().lower() for w in words if w.strip()))
+    setattr(user, "messenger_settings", current)
+
+    from sqlalchemy import select as sa_select
+    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = q.scalar_one_or_none()
+    if u:
+        u.messenger_settings = current  # type: ignore[attr-defined]
+    await session.commit()
+    await session.refresh(user)
+
+    return {"updated": True, "stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
+
+
+@router.post("/settings/stop-words/add")
+async def add_stop_word(
+    word: str = Body(..., embed=True),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Add a single stop word."""
+    w = word.strip().lower()
+    if not w:
+        raise HTTPException(status_code=400, detail="Stop word cannot be empty")
+
+    current = getattr(user, "messenger_settings", {}) or {}
+    words = current.get("stop_words", [])
+    if w in words:
+        return {"added": False, "duplicate": True, "stop_words": words}
+    words.append(w)
+    current["stop_words"] = words
+    setattr(user, "messenger_settings", current)
+
+    from sqlalchemy import select as sa_select
+    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = q.scalar_one_or_none()
+    if u:
+        u.messenger_settings = current  # type: ignore[attr-defined]
+    await session.commit()
+    await session.refresh(user)
+
+    return {"added": True, "stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
+
+
+@router.delete("/settings/stop-words/{word}")
+async def remove_stop_word(
+    word: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove a single stop word."""
+    w = word.strip().lower()
+    current = getattr(user, "messenger_settings", {}) or {}
+    words = current.get("stop_words", [])
+    if w in words:
+        words.remove(w)
+    current["stop_words"] = words
+    setattr(user, "messenger_settings", current)
+
+    from sqlalchemy import select as sa_select
+    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
+    u = q.scalar_one_or_none()
+    if u:
+        u.messenger_settings = current  # type: ignore[attr-defined]
+    await session.commit()
+    await session.refresh(user)
+
+    return {"stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
