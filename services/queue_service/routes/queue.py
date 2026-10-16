@@ -17,6 +17,22 @@ from services.queue_service.repositories.task_repo import QueueTaskRepository
 
 router = APIRouter(tags=["queue"])
 
+# Canonical integrations — mirrors project_service for label resolution
+_CANONICAL_INTEGRATIONS: list[dict] = [
+    {"key": "default", "label": "Default (без интеграции)", "description": "Стандартная настройка без внешней интеграции"},
+    {"key": "google-search-console", "label": "Google Search Console", "description": "Интеграция с Google Search Console"},
+    {"key": "yandex-webmaster", "label": "Яндекс Вебмастер", "description": "Интеграция с Яндекс.Вебмастер"},
+    {"key": "custom", "label": "Custom URL", "description": "Произвольный URL для индексации"},
+]
+
+
+def _resolve_integration_label(key: str) -> str:
+    """Resolve integration key to a human-readable label."""
+    for integ in _CANONICAL_INTEGRATIONS:
+        if integ["key"] == key:
+            return integ["label"]
+    return key  # fallback: show the raw key
+
 
 async def _task_repo(session: AsyncSession = Depends(get_session)) -> QueueTaskRepository:
     return QueueTaskRepository(session)
@@ -329,3 +345,129 @@ async def get_dashboard_stats(
         "today_completed": today_completed,
         "balance": balance,
     }
+
+
+@router.get("/dashboard-servers")
+async def get_dashboard_servers(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Per-server (integration type) dashboard aggregation: pending counts, speed/15min, own clicks, other clicks, hourly chart."""
+    from services.project_service.domain.models import Project as _ProjectModel
+    from sqlalchemy import func as sa_func
+
+    user_id = await _user_id_from_request(request)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    now_utc = datetime.now(timezone.utc)
+    yesterday = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Get all active project IDs for this user
+    projects_result = await session.execute(
+        select(Project.id).where(and_(Project.user_id == user_id, Project.is_active == True))  # noqa: E712
+    )
+    project_ids = [r[0] for r in projects_result.fetchall()]
+    if not project_ids:
+        return []
+
+    pid_list = [UUID(pid) for pid in project_ids]
+
+    # Subquery: count completed tasks per integration in the last 24h
+    yesterday_subq = sa_select(
+        cast(_ProjectModel.integrations["integration_type"], sa_text).astext.label("server"),
+        sa_func.count(QueueTask.id).label("total_completed"),
+    ).join(_ProjectModel, QueueTask.project_id == _ProjectModel.id).where(  # type: ignore[literal-required, union-attr]
+        and_(
+            QueueTask.project_id.in_(pid_list),  # type: ignore[arg-type]
+            QueueTask.status == "completed",
+            QueueTask.created_at >= yesterday_subq := sa_func.cast(yesterday, QueueTask.created_at.__class__),  # type: ignore[attr-defined]
+        )
+    ).group_by(cast(_ProjectModel.integrations["integration_type"], sa_text).astext)
+
+    yesterday_rows = await session.execute(yesterday_subq)
+    yesterday_map: dict[str, int] = {r[0]: r[1] for r in yesterday_rows.fetchall()}
+
+    # Pending tasks per integration (any time — these are currently queued)
+    pending_query = sa_select(
+        cast(_ProjectModel.integrations["integration_type"], sa_text).astext.label("server"),
+        sa_func.count(QueueTask.id).label("pending_count"),  # type: ignore[literal-required, union-attr]
+    ).join(_ProjectModel, QueueTask.project_id == _ProjectModel.id).where(  # type: ignore[literal-required, union-attr]
+        and_(
+            QueueTask.project_id.in_(pid_list),  # type: ignore[arg-type]
+            QueueTask.status == "pending",
+        )
+    ).group_by(cast(_ProjectModel.integrations["integration_type"], sa_text).astext)
+
+    pending_rows = await session.execute(pending_query)
+    pending_map: dict[str, int] = {r[0]: r[1] for r in pending_rows.fetchall()}
+
+    # Speed: completed tasks in the last 15 minutes per integration
+    fifteen_min_ago = now_utc.replace(second=0, microsecond=0)
+    speed_query = sa_select(
+        cast(_ProjectModel.integrations["integration_type"], sa_text).astext.label("server"),
+        sa_func.count(QueueTask.id).label("speed_count"),  # type: ignore[literal-required, union-attr]
+    ).join(_ProjectModel, QueueTask.project_id == _ProjectModel.id).where(  # type: ignore[literal-required, union-attr]
+        and_(
+            QueueTask.project_id.in_(pid_list),  # type: ignore[arg-type]
+            QueueTask.status == "completed",
+            QueueTask.created_at >= fifteen_min_ago,
+        )
+    ).group_by(cast(_ProjectModel.integrations["integration_type"], sa_text).astext)
+
+    speed_rows = await session.execute(speed_query)
+    speed_map: dict[str, int] = {r[0]: r[1] for r in speed_rows.fetchall()}
+
+    # 24h hourly distribution per integration (completed tasks grouped by hour bucket)
+    hourly_query = sa_select(
+        cast(_ProjectModel.integrations["integration_type"], sa_text).astext.label("server"),
+        sa_func.extract("hour", QueueTask.created_at.cast(sa.DateTime)).label("hour"),  # type: ignore[attr-defined]
+        sa_func.count(QueueTask.id),  # type: ignore[attr-defined]
+    ).join(_ProjectModel, QueueTask.project_id == _ProjectModel.id).where(  # type: ignore[literal-required, union-attr]
+        and_(
+            QueueTask.project_id.in_(pid_list),  # type: ignore[arg-type]
+            QueueTask.status == "completed",
+            QueueTask.created_at >= yesterday,
+        )
+    ).group_by(cast(_ProjectModel.integrations["integration_type"], sa_text).astext, sa_func.extract("hour", QueueTask.created_at.cast(sa.DateTime)))  # type: ignore[attr-defined,literal-required,union-attr]
+
+    hourly_rows = await session.execute(hourly_query)
+    # Build per-server hourly buckets: server -> {0..23} -> count
+    hourly_map: dict[str, dict[int, int]] = {}
+    for row in hourly_rows.fetchall():
+        srv, hour, cnt = row[0], int(row[1]), row[2]
+        if srv not in hourly_map:
+            hourly_map[srv] = {h: 0 for h in range(24)}
+        hourly_map[srv][hour] = cnt
+
+    # Gather all known integration keys from config too
+    canonical_integrations = [
+        {"key": "default", "label": "По умолчанию"},
+        {"key": "google-search-console", "label": "Google Search Console"},
+        {"key": "yandex-webmaster", "label": "Яндекс.Вебмастер"},
+        {"key": "custom", "label": "Свой домен"},
+    ]
+
+    # Build response: only servers with data
+    all_servers = set(list(pending_map.keys()) + list(speed_map.keys()) + list(yesterday_map.keys()) + list(hourly_map.keys()))
+    if not all_servers:
+        return []
+
+    from services.project_service.routes.projects import _get_integration_label
+
+    result = []
+    for srv_key in sorted(all_servers):
+        label = _resolve_integration_label(srv_key)
+        hourly_data = hourly_map.get(srv_key, {})
+        # Build hourly array for the last 24 hours starting from midnight
+        hourly_bars = [hourly_data.get(h, 0) for h in range(24)]
+        result.append({
+            "integration": srv_key,
+            "label": label,
+            "pending": pending_map.get(srv_key, 0),
+            "speed_per_15min": speed_map.get(srv_key, 0),
+            "completed_24h": yesterday_map.get(srv_key, 0),
+            "hourly_bars": hourly_bars,
+        })
+
+    return result

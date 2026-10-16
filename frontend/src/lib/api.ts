@@ -296,6 +296,7 @@ export const api = {
 			return fetcher(path);
 		},
 		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),
+		dashboardServers: () => fetcher("/api/queue/dashboard-servers"),
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),
