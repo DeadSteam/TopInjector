@@ -36,6 +36,26 @@
 	// Active TOP range filter for interactive buttons
 	let activeTopRange = $state<string>('all');
 
+	// TOP range metrics: % per range, delta vs previous period
+	let topRangePcts = $state<number[]>([]);
+	let topRangeDelta = $state<number[]>([]); // delta percentage points vs previous period
+	let showNoPositions = $state(false); // toggle to show tasks without positions
+
+	const topRangeLabels = ['1–3 (Топ-3)', '4–5', '6–10', '11–20', '21–50', '>50'];
+
+	function updateTopRangeMetrics() {
+		if (!topRangesData?.ranges || !topRangesData.total_clicks) {
+			topRangePcts = [];
+			topRangeDelta = [];
+			return;
+		}
+		const total = topRangesData.total_clicks;
+		topRangePcts = topRangesData.ranges.map((r: any) => {
+			if (!total || total === 0) return 0;
+			return Number(((r.clicks / total) * 100).toFixed(1));
+		});
+	}
+
 	// Project selector for scoped analytics
 	let projects = $state<any[]>([]);
 	let selectedProject = $state<string>("");
@@ -138,6 +158,15 @@
 			topRangesData = null;
 		} finally {
 			topRangesLoading = false;
+		}
+		updateTopRangeMetrics();
+	}
+
+	function refreshTopRangeFilter(btn: any) {
+		if (btn.value === activeTopRange) {
+			activeTopRange = 'all';
+		} else {
+			activeTopRange = btn.value;
 		}
 	}
 
@@ -425,27 +454,38 @@
 	<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
 		<h3 class="font-medium text-gray-900 mb-4">Клики по диапазону позиций</h3>
 
-		<!-- TOP range toggle buttons -->
+		<!-- TOP range toggle buttons with % and "Без позиций" toggle -->
 		{#if topRangesData && topRangesData.ranges.length > 0}
-		<div class="flex gap-2 mb-4 flex-wrap">
-			{#each topRangeButtons as btn}
+		<div class="flex gap-2 mb-3 flex-wrap items-center">
+			{#each topRangeButtons as btn, btnIdx}
 				<button
-					onclick={() => activeTopRange = btn.value}
-					class="px-3 py-1.5 text-sm rounded-lg transition-colors {activeTopRange === btn.value ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}">
+					onclick={() => refreshTopRangeFilter(btn)}
+					class={`px-3 py-1.5 text-sm rounded-lg transition-colors ${activeTopRange === btn.value ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
 					{btn.label}
+					{#if btn.value !== 'all' && topRangePcts[btnIdx] > 0}
+						<span class="ml-1 text-xs opacity-80">{topRangePcts[btnIdx]}%</span>
+					{/if}
 				</button>
 			{/each}
+			<button onclick={() => showNoPositions = !showNoPositions}
+				class={`px-3 py-1.5 text-sm rounded-lg transition-colors ${showNoPositions ? 'bg-red-100 text-red-700 border-red-300' : 'border border-gray-300 hover:bg-gray-50 text-gray-500'}`}>
+				Без позиций
+			</button>
 		</div>
 		{/if}
 
 		{#if topRangesLoading}
 			<div class="h-64 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">Загрузка...</div>
 		{:else if topRangesData && topRangesData.ranges.length > 0}
-			<div class="grid grid-cols-6 gap-3 mb-4">
-				{#each topRangesData.ranges as range}
-					<div class="bg-gray-50 rounded-lg p-3 text-center">
-						<p class="text-xs text-gray-500 mb-1">{range.label}</p>
+			<!-- Per-range stats with % -->
+			<div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
+				{#each topRangesData.ranges as range, idx}
+					<div class="bg-gray-50 rounded-lg p-3 text-center border border-gray-100 hover:border-blue-200 transition-colors">
+						<p class="text-xs text-gray-500 mb-1 truncate">{range.label}</p>
 						<p class="text-xl font-bold text-gray-900">{range.clicks}</p>
+						<p class={`text-xs font-medium mt-1 ${topRangePcts[idx] > 20 ? 'text-green-600' : topRangePcts[idx] > 10 ? 'text-blue-600' : 'text-gray-500'}`}>
+							{topRangePcts[idx]}%
+						</p>
 						{#if range.avg_position}
 							<p class="text-xs text-blue-600 mt-1">ср: #{range.avg_position}</p>
 						{/if}
