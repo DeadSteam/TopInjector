@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "../app.css";
+	import "../../app.css";
 	import { page } from '$app/stores';
 	import { api } from "$lib/api";
 	import { onMount, onDestroy } from 'svelte';
@@ -15,7 +15,7 @@
 	// Global search (Ctrl+E)
 	let showGlobalSearch = $state(false);
 	let globalQuery = $state("");
-	let globalResults = $state({ groups: [] as any[], projects: [] as any[], queries: [] as any[] });
+	let globalResults = $state<{ groups: any[], projects: any[], queries: any[] }>({ groups: [], projects: [], queries: [] });
 	let searchingGlobal = $state(false);
 	let searchDebounce = 0;
 
@@ -87,7 +87,13 @@
 		}
 		document.addEventListener('keydown', onKeydown as any);
 
-		onDestroy(() => { clearInterval(statsInterval); clearInterval(notifInterval); });
+		function cleanup() {
+			clearInterval(statsInterval);
+			clearInterval(notifInterval);
+			if (searchDebounce) clearTimeout(searchDebounce);
+		}
+		onDestroy(cleanup);
+	});
 
 	async function loadNotifications() {
 		try {

@@ -1,36 +1,32 @@
+<script context="module" lang="ts">
+	declare const Redoc: any;
+</script>
 <script lang="ts">
 	import { onMount } from 'svelte';
 
 	onMount(() => {
-		// Load Redocly standalone and render OpenAPI spec
 		const script = document.createElement('script');
 		script.src = 'https://cdn.jsdelivr.net/npm/redoc/bundles/redoc.standalone.js';
 		script.onload = () => {
-			if (typeof Redoc !== 'undefined') {
-				const el = document.getElementById('redoc-container');
-				if (el) {
-					// Fetch the spec from our gateway
-					const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-					fetch(`${BASE_URL}/api/internal/openapi.json`)
-						.then(r => r.json())
-						.then(spec => {
-							Redoc.init(spec, {
-								showExtensions: true,
-								sortPropsAlphabetically: true,
-							theme: {
-									rightPanelBackgroundColor: '#1e293b',
-									sizes: {
-										baseFontSize: '14px',
-									},
-								},
-							}, el);
-						})
-						.catch(() => {
-							// Fallback if no spec endpoint exists
-							const fallback = document.getElementById('fallback-docs');
-							if (fallback) fallback.style.display = 'block';
-						});
-			}
+			if (typeof Redoc === 'undefined') return;
+			const el = document.getElementById('redoc-container');
+			if (!el) return;
+
+			const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+			fetch(`${BASE_URL}/api/internal/openapi.json`)
+				.then(r => r.json())
+				.then((spec) => {
+					const opts = {
+						showExtensions: true,
+						sortPropsAlphabetically: true,
+						theme: { rightPanelBackgroundColor: '#1e293b', sizes: { baseFontSize: '14px' } },
+					};
+					Redoc.init(spec, opts, el);
+				})
+				.catch(() => {
+					const fallback = document.getElementById('fallback-docs');
+					if (fallback) fallback.style.display = 'block';
+				});
 		};
 		document.head.appendChild(script);
 	});
@@ -62,7 +58,7 @@
 				<div class="border border-gray-200 rounded-lg p-4">
 					<div class="flex items-center gap-2 mb-1">
 						<span class="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">PUT</span>
-						<span class="font-mono text-sm text-gray-900">/api/external/v1/projects/{id}</span>
+						<span class="font-mono text-sm text-gray-900">/api/external/v1/projects/{"{"}id{"}"}</span>
 					</div>
 					<p class="text-sm text-gray-600">Обновление проекта.</p>
 				</div>
@@ -72,7 +68,7 @@
 						<span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/terms/upsert</span>
 					</div>
-					<p class="text-sm text-gray-600">Массовое добавление/обновление ключевых запросов. Тело: array of { text, url, click_url, geo, daily_count }.</p>
+					<p class="text-sm text-gray-600">Массовое добавление/обновление ключевых запросов. Тело: array of {"{"} text, url, click_url, geo, daily_count {"}"}}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -96,7 +92,7 @@
 						<span class="px-2 py-0.5 bg-pink-100 text-pink-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/users</span>
 					</div>
-					<p class="text-sm text-gray-600">Пригласить пользователя в организацию. Тело: { email, role }.</p>
+					<p class="text-sm text-gray-600">Пригласить пользователя в организацию. Тело: {"{"} email, role {"}"}}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -104,7 +100,7 @@
 						<span class="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/balance/add</span>
 					</div>
-					<p class="text-sm text-gray-600">Пополнить баланс проекта. Тело: { project_id, amount }.</p>
+					<p class="text-sm text-gray-600">Пополнить баланс проекта. Тело: {"{"} project_id, amount {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -112,7 +108,7 @@
 						<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/balance/set</span>
 					</div>
-					<p class="text-sm text-gray-600">Установить баланс проекта. Тело: { project_id, amount }.</p>
+					<p class="text-sm text-gray-600">Установить баланс проекта. Тело: {"{"} project_id, amount {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -135,7 +131,7 @@
 						<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/auth/login</span>
 					</div>
-					<p class="text-sm text-gray-600">Вход. Тело: { email, password }.</p>
+					<p class="text-sm text-gray-600">Вход. Тело: {"{"} email, password {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -143,7 +139,7 @@
 						<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/auth/register</span>
 					</div>
-					<p class="text-sm text-gray-600">Регистрация. Тело: { email, password, display_name }.</p>
+					<p class="text-sm text-gray-600">Регистрация. Тело: {"{"} email, password, display_name {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -151,7 +147,7 @@
 						<span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/auth/refresh</span>
 					</div>
-					<p class="text-sm text-gray-600">Обновление токена. Тело: { refresh_token }.</p>
+					<p class="text-sm text-gray-600">Обновление токена. Тело: {"{"} refresh_token {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -167,7 +163,7 @@
 						<span class="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">PUT</span>
 						<span class="font-mono text-sm text-gray-900">/api/users/profile</span>
 					</div>
-					<p class="text-sm text-gray-600">Обновить профиль. Тело: { display_name }.</p>
+					<p class="text-sm text-gray-600">Обновить профиль. Тело: {"{"} display_name {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -223,13 +219,13 @@
 						<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/users/password</span>
 					</div>
-					<p class="text-sm text-gray-600">Сменить пароль. Тело: { current_password, new_password }.</p>
+					<p class="text-sm text-gray-600">Сменить пароль. Тело: {"{"} current_password, new_password {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
 					<div class="flex items-center gap-2 mb-1">
 						<span class="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded text-xs font-bold">POST</span>
-						<span class="font-mono text-sm text-gray-900">/api/projects/{id}/queries/bulk-update</span>
+						<span class="font-mono text-sm text-gray-900">/api/projects/{"{"}id{"}"}/queries/bulk-update</span>
 					</div>
 					<p class="text-sm text-gray-600">Массовое обновление запросов. Тело: <code class="bg-gray-100 px-1 rounded">&#123; query_ids, daily_clicks?, geo?, click_url? &#125;</code>.</p>
 				</div>

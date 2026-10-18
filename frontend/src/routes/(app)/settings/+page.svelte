@@ -167,7 +167,7 @@
 
 	async function loadAdminStats() {
 		try {
-			const stats = await api.admin.stats();
+			const stats = await api.projects.adminStats();
 			adminStats = stats;
 		} catch {} finally { loadingAdmin = false; }
 	}

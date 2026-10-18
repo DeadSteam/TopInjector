@@ -22,6 +22,8 @@
 	let error = $state("");
 	let newQueryText = $state("");
 	let groups = $state<any[]>([]);
+	let projectGroupIcon = $state<string | null>(null);
+	let drillGeoDebounceTimer: number | null = null;
 
 	// Queue stats & source breakdown
 	let queueStats = $state({ pending: 0, in_progress: 0, completed: 0, not_found: 0, stuck: 0 });
@@ -34,9 +36,31 @@
 	let showChart = $state(true);
 	let chartHoverQuery = $state<string | null>(null);
 	let visibleTrendQueries = $state<Set<string>>(new Set());
+	let hoverDate = $state<string | null>(null);
 
 	// Filtered visible trend lines
 	const visibleTrendLines = $derived(trendLines.filter((l: any) => visibleTrendQueries.has(l.text)));
+
+	// Chart dimensions
+	const dims = $derived(getChartDims());
+
+	// X-axis label indices (sample up to ~6 labels)
+	const xLabelIndices = $derived(
+		visibleTrendLines[0]?.data ? ([...Array(visibleTrendLines[0].data.length).keys()].map((k) => Math.min(k * Math.max(1, Math.floor(visibleTrendLines[0].data.length / 6)), visibleTrendLines[0].data.length - 1))) : []
+	);
+
+	// Hover helpers
+	const hoverIdx = $derived(visibleTrendLines[0]?.data?.findIndex((d: any) => d.date === hoverDate) ?? -1);
+	const hoverPointData = $derived(
+		hoverDate && visibleTrendLines[0]?.data?.length > 0
+			? visibleTrendLines[0].data.find((p: any) => p.date === hoverDate)
+			: null
+	);
+
+	function getHoverPoint(data: any[], date: string | null) {
+		if (!date || !data?.length) return null;
+		return data.find((p: any) => p.date === date);
+	}
 
 	// Request table stats
 	let requestTableData = $state<any[]>([]);
@@ -176,6 +200,20 @@
 		input.value = ""; // reset so same file can be re-selected
 	}
 
+	function handleExport() {
+		if (!queries.length) return;
+		const headers = ["text", "url", "click_url", "daily_clicks", "position", "completed"];
+		const rows = queries.map(q => [q.text, q.url, q.click_url, q.daily_clicks, q.position, q.completed].map(v => `"${String(v ?? "")}"`).join(","));
+		const csv = [headers.join(","), ...rows].join("\n");
+		const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `queries_${projectId}_${new Date().toISOString().slice(0, 10)}.csv`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
 	function parseCsvPreview(csvText: string) {
 		const lines = csvText.trim().split(/\r?\n/);
 		if (lines.length < 2) {
@@ -294,6 +332,7 @@
 	async function loadProject() {
 		try {
 			project = await api.projects.get(projectId);
+			projectGroupIcon = getGroupIcon(project.group_id);
 			await loadQueries();
 			await loadQueueStats();
 			await loadSourceBreakdown();
@@ -727,7 +766,7 @@
 		const dates = lines[0].data.map((d: any) => d.date);
 		if (!dates.length) return "";
 
-		const allPositions = lines.flatMap(l => l.data.map(d => d.position));
+		const allPositions = lines.flatMap((l: any) => l.data.map((d: any) => d.position));
 		const minP = Math.max(1, Math.min(...allPositions) - 1);
 		const maxP = Math.min(20, Math.max(...allPositions) + 1);
 
@@ -755,7 +794,7 @@
 		const dates = lines[0].data.map((d: any) => d.date);
 		if (!dates.length) return [];
 
-		const allPositions = lines.flatMap(l => l.data.map(d => d.position));
+		const allPositions = lines.flatMap((l: any) => l.data.map((d: any) => d.position));
 		const minP = Math.max(1, Math.min(...allPositions) - 1);
 		const maxP = Math.min(20, Math.max(...allPositions) + 1);
 
@@ -794,8 +833,6 @@
 		hoverDate = dates[nearestIdx];
 	}
 
-	let hoverDate = $state<string | null>(null);
-
 	function startAutoRefresh() {
 		stopAutoRefresh();
 		autoRefreshId = window.setInterval(async () => {
@@ -825,7 +862,7 @@
 	});
 
 
-	function switchTab(tab: string) {
+	async function switchTab(tab: string) {
 		activeTab = tab;
 		if (tab === 'positions') loadPositions();
 		if (tab === 'markers') loadMarkers();
@@ -948,9 +985,8 @@
 						<h1 class="text-xl font-bold text-gray-900">{project.name}</h1>
 						{#if project.group_name}
 							<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-50 text-blue-700 border border-blue-200">
-								{#const gIcon = getGroupIcon(project.group_id)}
-								{#if gIcon}
-									<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderGroupIconPath(gIcon)}"/></svg>
+								{#if projectGroupIcon}
+									<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{renderGroupIconPath(projectGroupIcon)}"/></svg>
 								{/if}
 								<a href={groupLink(project.group_id)} class="hover:underline">{project.group_name}</a>
 							</span>
@@ -1205,74 +1241,74 @@
 						</p>
 					</div>
 				</div>
+
+				<!-- Timeline bar chart -->
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+					<h3 class="font-medium text-gray-900 mb-4">Клики по дням</h3>
+
+					{#if timelineData.length === 0}
+						<div class="h-48 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+							Нет данных о кликах. Клики начнут отображаться после выполнения первых задач.
+						</div>
+					{:else}
+						<div class="flex items-end gap-0.5 h-48 px-1">
+							{#each timelineData as point, i}
+								<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
+									<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
+										{new Date(point.date).toLocaleDateString("ru-RU")}: {point.count} кликов
+									</div>
+									<div class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors" style="height: calc({point.count} / {maxTimelineCount} * 100%)"></div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			{/if}
 
-			<!-- Timeline bar chart -->
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
-				<h3 class="font-medium text-gray-900 mb-4">Клики по дням</h3>
-
-				{#if timelineData.length === 0}
-					<div class="h-48 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
-						Нет данных о кликах. Клики начнут отображаться после выполнения первых задач.
-					</div>
-				{:else}
-					<div class="flex items-end gap-0.5 h-48 px-1">
-						{#each timelineData as point, i}
-							<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
-								<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
-									{new Date(point.date).toLocaleDateString("ru-RU")}: {point.count} кликов
-								</div>
-								<div class="w-full bg-blue-500 hover:bg-blue-600 rounded-t transition-colors" style="height: calc({point.count} / {maxTimelineCount} * 100%)"></div>
-							</div>
-						{/each}
-					</div>
-			</div>
-			</div>
-		</div>
-		<!-- Position tracking -->
-		{#if positionSummary && positionSummary.total_records > 0}
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
-				<h3 class="font-medium text-gray-900 mb-4">Позиции</h3>
-				<div class="flex gap-4 mb-4">
-					<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
-						<span class="text-xs text-green-700">Лучшая:</span>
-						<span class="text-sm font-bold text-green-900 ml-1">#{positionSummary.best_position}</span>
-					</div>
-					<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
-						<span class="text-xs text-blue-700">Средняя:</span>
-						<span class="text-sm font-bold text-blue-900 ml-1">{positionSummary.avg_position}</span>
+			{#if positionSummary && positionSummary.total_records > 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+					<h3 class="font-medium text-gray-900 mb-4">Позиции</h3>
+					<div class="flex gap-4 mb-4">
+						<div class="px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+							<span class="text-xs text-green-700">Лучшая:</span>
+							<span class="text-sm font-bold text-green-900 ml-1">#{positionSummary.best_position}</span>
+						</div>
+						<div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+							<span class="text-xs text-blue-700">Средняя:</span>
+							<span class="text-sm font-bold text-blue-900 ml-1">{positionSummary.avg_position}</span>
+						</div>
 					</div>
 				</div>
-			</div>
 
-			<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-				<div class="overflow-x-auto">
-					<table class="w-full text-sm">
-						<thead class="bg-gray-50 border-b border-gray-200">
-							<tr>
-								<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
-								<th class="px-4 py-3 text-left font-medium text-gray-600">Дата</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each trackingData.slice(-50).reverse() as point}
-								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-									<td class="px-4 py-3 font-mono font-bold {point.position <= 3 ? 'text-green-600' : point.position <= 10 ? 'text-blue-600' : 'text-gray-500'}">
-										#{point.position}
-									</td>
-									<td class="px-4 py-3 text-gray-500">{point.date ? new Date(point.date).toLocaleDateString('ru-RU') : '—'}</td>
+				<div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+					<div class="overflow-x-auto">
+						<table class="w-full text-sm">
+							<thead class="bg-gray-50 border-b border-gray-200">
+								<tr>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Позиция</th>
+									<th class="px-4 py-3 text-left font-medium text-gray-600">Дата</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{#each trackingData.slice(-50).reverse() as point}
+									<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+										<td class="px-4 py-3 font-mono font-bold {point.position <= 3 ? 'text-green-600' : point.position <= 10 ? 'text-blue-600' : 'text-gray-500'}">
+											#{point.position}
+										</td>
+										<td class="px-4 py-3 text-gray-500">{point.date ? new Date(point.date).toLocaleDateString('ru-RU') : '—'}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
 				</div>
-			</div>
-		{/if}
+			{/if}
 
-		{:else if analyticsSummary === null && timelineData.length === 0}
-			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
-				Нет данных аналитики. Данные появятся после выполнения первых задач очереди.
-			</div>
+			{#if analyticsSummary === null && timelineData.length === 0}
+				<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm text-center text-gray-400">
+					Нет данных аналитики. Данные появятся после выполнения первых задач очереди.
+				</div>
+			{/if}
 
 	{:else if activeTab === 'stats'}
 		<!-- Stats tab: per-query statistics -->
@@ -1356,12 +1392,11 @@
 					{/each}
 				</div>
 
-				<svg viewBox="0 0 {getChartDims().containerW} {getChartDims().containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
-					{#const dims = getChartDims()}
+				<svg viewBox="0 0 {dims.containerW} {dims.containerH}" class="w-full overflow-visible" onmousemove={chartMouseMove}>
 					<!-- Grid lines (horizontal) -->
-					{#for (let i = 1; i <= Math.min(10, Math.floor(dims.innerH / 30)); i++)}
+					{#each Array.from({ length: Math.min(10, Math.floor(dims.innerH / 30)) }, (_, i) => i + 1 as number) as i}
 						<line x1={dims.marginL} y1={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} x2={dims.marginL + dims.innerW} y2={dims.marginT + (i / Math.min(10, Math.floor(dims.innerH / 30))) * dims.innerH} stroke="#f1f5f9" stroke-width="1" />
-					{/for}
+					{/each}
 
 					<!-- Axis labels -->
 					{#if visibleTrendLines[0]?.data?.length > 0}
@@ -1369,9 +1404,9 @@
 						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
 
 						<!-- X-axis date labels -->
-						{#for (let i = 0; i < visibleTrendLines[0].data.length; i += Math.max(1, Math.floor(visibleTrendLines[0].data.length / 6)))}
-							<text x={dims.marginL + (i / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(visibleTrendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
-						{/for}
+							{#each xLabelIndices as i}
+								<text x={dims.marginL + (i / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(visibleTrendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
+							{/each}
 
 						<!-- Trend line names -->
 						{#each visibleTrendLines as line}
@@ -1383,7 +1418,6 @@
 
 						<!-- Hover line and tooltip -->
 						{#if hoverDate && visibleTrendLines[0]?.data?.length > 0}
-							{#const hoverIdx = visibleTrendLines[0].data.findIndex((d: any) => d.date === hoverDate)}
 							{#if hoverIdx >= 0}
 								<line x1={dims.marginL + (hoverIdx / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y1={dims.marginT} x2={dims.marginL + (hoverIdx / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y2={dims.marginT + dims.innerH} stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5" />
 							{/if}
@@ -1409,11 +1443,10 @@
 						<div class="mt-3 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
 							<p class="font-medium text-gray-700">{new Date(hoverDate).toLocaleDateString('ru-RU')}</p>
 							{#each visibleTrendLines as line}
-								{#const d = line.data.find((p: any) => p.date === hoverDate)}
-								{#if d}
+								{#if getHoverPoint(line.data, hoverDate)}
 									<div class="flex justify-between gap-4">
 										<span class="text-gray-500 truncate">{line.text}</span>
-										<span class="font-mono font-medium text-blue-600">#{d.position}</span>
+										<span class="font-mono font-medium text-blue-600">#{getHoverPoint(line.data, hoverDate)?.position}</span>
 									</div>
 								{/if}
 							{/each}
@@ -1715,7 +1748,7 @@
 			<label class="block text-sm font-medium text-gray-700 mb-1">Количество</label>
 			<input type="number" bind:value={proklikCount} min="1" max="1000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
 		{:else}
-			<p class="text-sm text-gray-600 mb-3">Отправить проклики по выбранным запросам ({proklikQueries.length шт.}).</p>
+			<p class="text-sm text-gray-600 mb-3">Отправить пролики по выбранным запросам ({proklikQueries.length + " шт."}).</p>
 			<label class="block text-sm font-medium text-gray-700 mb-1">Кликов на каждый запрос</label>
 			<input type="number" bind:value={proklikCount} min="1" max="100" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" />
 		{/if}
@@ -1893,7 +1926,7 @@
 			<option value="with">Только с подсказками</option>
 		</select>
 		<label class="text-xs text-gray-500 whitespace-nowrap">Geo (поиск):</label>
-		<input type="text" bind:value={drillFilterGeo} placeholder="страна, город..." oninput={() => { clearTimeout((this as any)._t); (this as any)._t = setTimeout(() => openDailyDrillDown(drillDate), 300); }} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none w-44" />
+		<input type="text" bind:value={drillFilterGeo} placeholder="страна, город..." oninput={() => { if (drillGeoDebounceTimer) clearTimeout(drillGeoDebounceTimer); drillGeoDebounceTimer = window.setTimeout(() => openDailyDrillDown(drillDate), 300); }} class="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none w-44" />
 		<button onclick={resetDrillFilters} class="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-200 transition-colors ml-auto">
 			Сбросить
 		</button>
@@ -1914,13 +1947,13 @@
 									<p class="text-sm text-gray-900 truncate">{click.url}</p>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700">{statusLabels[click.source] || click.source}</span>
-										<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {click.status === &#x27;completed&#x27; ? &#x27;bg-green-50 text-green-700&#x27; : click.status === &#x27;not_found&#x27; ? &#x27;bg-red-50 text-red-700&#x27; : &#x27;bg-yellow-50 text-yellow-700&#x27;}">{statusLabels[click.status] || click.status}</span>
+										<span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {click.status === 'completed' ? 'bg-green-50 text-green-700' : click.status === 'not_found' ? 'bg-red-50 text-red-700' : 'bg-yellow-50 text-yellow-700'}">{statusLabels[click.status] || click.status}</span>
 										{#if click.position}
 											<span class="text-xs text-gray-500">&#1055;&#1086;&#1076;: {click.position}</span>
 											{/if}
 									</div>
 								</div>
-								<span class="text-xs text-gray-400 whitespace-nowrap">{click.created_at ? new Date(click.created_at).toLocaleTimeString(&#x27;ru-RU&#x27;) : &#x27;&#x27;}</span>
+								<span class="text-xs text-gray-400 whitespace-nowrap">{click.created_at ? new Date(click.created_at).toLocaleTimeString('ru-RU') : ''}</span>
 							</div>
 						</div>
 					{/each}
@@ -2005,7 +2038,7 @@
 		</div>
 		<div>
 			<label class="block text-sm font-medium text-gray-700 mb-1">Гео (JSON, опционально)</label>
-			<textarea bind:value={bulkEditGeoJson} rows="3" placeholder='{"country": "ru"}' class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
+			<textarea bind:value={bulkEditGeoJson} rows="3" placeholder={`{\"country\": \"ru\"}`} class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
 			<p class="text-xs text-gray-400 mt-1">Заменит geo у выбранных запросов (должен быть валидным JSON)</p>
 		</div>
 		<div>

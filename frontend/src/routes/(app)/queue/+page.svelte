@@ -48,7 +48,7 @@
 
 	async function loadIntegrations() {
 		try {
-			const res = await api.integrations.list();
+			const res = await api.projects.integrations();
 			integrations = res.integrations || [];
 		} catch { /* ignore */ }
 	}
@@ -303,13 +303,13 @@
 		{#if integrations.length > 0}
 		<div class="mb-4 flex gap-2 flex-wrap">
 			<span class="text-sm text-gray-500 py-1.5">Интеграция:</span>
-			<button onclick={() => { filterIntegration = ""; loadQueue(); }}
-				class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === "" ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}'>
+			<button onclick={() => { filterIntegration = ''; loadQueue(); }}
+				class='px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === "" ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}'>
 				Все
 			</button>
 			{#each integrations as integ}
 				<button onclick={() => { filterIntegration = integ.key; loadQueue(); }}
-					class="px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === integ.key ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}" title={integ.description || integ.key}>
+					class='px-3 py-1.5 text-sm rounded-lg transition-colors {filterIntegration === integ.key ? "bg-blue-600 text-white" : "border border-gray-300 hover:bg-gray-50"}' title={integ.description || integ.key}>
 					{integ.label || integ.key}
 				</button>
 			{/each}
