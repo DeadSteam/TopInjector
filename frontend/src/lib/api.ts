@@ -1,6 +1,10 @@
 /** API client for TopInjector backend. */
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// In production, use relative paths so nginx handles routing.
+// In dev (or Docker), VITE_API_URL points to the backend for direct access.
+const BASE_URL = import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== "/"
+	? import.meta.env.VITE_API_URL
+	: "";
 let refreshTokenFns: Array<{ resolve: (v: string) => void; reject: (e: Error) => void }> = [];
 let refreshingPromise: Promise<string> | null = null;
 

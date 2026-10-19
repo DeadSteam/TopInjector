@@ -82,7 +82,7 @@ def upgrade() -> None:
         sa.Column("country_code", sa.String(3), nullable=False, server_default="ru"),
         sa.Column("region_name", sa.String(200), nullable=False),
         sa.Column("city_name", sa.String(200), nullable=False),
-        sa.Column("is_city_center", sa.JSON(), nullable=True),
+        sa.Column("is_city_center", sa.Text(), nullable=True),
         sa.Column("search_aliases", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -90,33 +90,28 @@ def upgrade() -> None:
         sa.UniqueConstraint("city_name", "region_name", name="uq_geo_code_preset_city_region"),
     )
 
-    # Insert seed data
+    # Insert seed data using raw SQL to avoid asyncpg boolean bind param issue
     conn = op.get_bind()
     from datetime import datetime, timezone
+    import json as _json
+    import uuid as _uuid
+    import hashlib as _hashlib
     _now = datetime.now(timezone.utc).isoformat()
     for name, country, region, city, is_center, aliases in _SEED_DATA:
-        yandex_id = {"type": "region", "id": __import__("hashlib").md5(region.encode()).hexdigest()[:8]}
-        conn.execute(
-            sa.text("""
-                INSERT INTO geo_code_presets
-                    (id, name, yandex_geo_id, country_code, region_name, city_name, is_city_center, search_aliases, created_at, updated_at)
-                VALUES
-                    (:id, :name, :yandex_geo_id, :country_code, :region_name, :city_name, :is_city_center, :search_aliases, :created_at, :updated_at)
-                ON CONFLICT (city_name, region_name) DO NOTHING
-            """),
-            {
-                "id": str(__import__("uuid").uuid4()),
-                "name": name,
-                "yandex_geo_id": __import__("json").dumps(yandex_id),
-                "country_code": country,
-                "region_name": region,
-                "city_name": city,
-                "is_city_center": is_center,
-                "search_aliases": aliases,
-                "created_at": _now,
-                "updated_at": _now,
-            },
-        )
+        yandex_id = {"type": "region", "id": _hashlib.md5(region.encode()).hexdigest()[:8]}
+        uid = str(_uuid.uuid4())
+        safe_name = name.replace("'", "''")
+        safe_region = region.replace("'", "''")
+        safe_city = city.replace("'", "''")
+        safe_aliases = aliases.replace("'", "''")
+        true_str = "true" if is_center else "false"
+        conn.execute(sa.text(f"""
+            INSERT INTO geo_code_presets
+                (id, name, yandex_geo_id, country_code, region_name, city_name, is_city_center, search_aliases, created_at, updated_at)
+            VALUES
+                ('{uid}', '{safe_name}', '{_json.dumps(yandex_id)}', '{country}', '{safe_region}', '{safe_city}', {true_str}, '{safe_aliases}', '{_now}', '{_now}')
+            ON CONFLICT (city_name, region_name) DO NOTHING
+        """))
 
 
 def downgrade() -> None:

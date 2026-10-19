@@ -30,3 +30,7 @@ app.config_from_object({
         },
     },
 })
+
+# Import task modules so Celery registers them
+import workers.scheduler  # noqa: F401, E402
+import workers.stale_checker  # noqa: F401, E402

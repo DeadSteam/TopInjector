@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "../app.css";
+	import "../../app.css";
 	import { api } from "$lib/api";
 	import { onMount, onDestroy } from 'svelte';
 
@@ -524,7 +524,9 @@
 		contextMenu = { x: e.clientX, y: e.clientY, projectId };
 	}
 
-	document.addEventListener("click", () => { contextMenu = null; });
+	if (typeof document !== 'undefined') {
+		document.addEventListener("click", () => { contextMenu = null; });
+	}
 
 	async function copyProject(id: string) {
 		const proj = projects.find(p => p.id === id);
@@ -975,9 +977,6 @@
 			<button onclick={bulkDelegateSelected} class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors">Делегировать</button>
 			<button onclick={bulkAutoStopSelected} class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded-lg transition-colors">Авто-стоп</button>
 			<button onclick={bulkDeleteSelected} class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors">Удалить</button>
-			<div class="h-6 w-px bg-gray-700"></div>
-				Удалить
-			</button>
 			<div class="h-6 w-px bg-gray-700"></div>
 			<button onclick={() => { selectedProjectIds = []; showBulkToolbar = false; }} class="text-gray-400 hover:text-gray-200 text-xs">Снять выделение</button>
 		</div>

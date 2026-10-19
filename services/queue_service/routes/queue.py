@@ -374,6 +374,7 @@ async def get_dashboard_servers(
     pid_list = [UUID(pid) for pid in project_ids]
 
     # Subquery: count completed tasks per integration in the last 24h
+    created_at_gte_yesterday = QueueTask.created_at >= sa_func.cast(yesterday, QueueTask.created_at.__class__)
     yesterday_subq = sa_select(
         cast(_ProjectModel.integrations["integration_type"], sa_text).astext.label("server"),
         sa_func.count(QueueTask.id).label("total_completed"),
@@ -381,7 +382,7 @@ async def get_dashboard_servers(
         and_(
             QueueTask.project_id.in_(pid_list),  # type: ignore[arg-type]
             QueueTask.status == "completed",
-            QueueTask.created_at >= yesterday_subq := sa_func.cast(yesterday, QueueTask.created_at.__class__),  # type: ignore[attr-defined]
+            created_at_gte_yesterday,
         )
     ).group_by(cast(_ProjectModel.integrations["integration_type"], sa_text).astext)
 
