@@ -37,7 +37,7 @@ async def test_register_duplicate_email(client: AsyncClient):
     )
     resp = await client.post(
         "/api/auth/register",
-        json={"email": "dup@example.com", "password": "other", "display_name": "Other"},
+        json={"email": "dup@example.com", "password": "other-secret", "display_name": "Other"},
     )
     assert resp.status_code == codes.CONFLICT
 

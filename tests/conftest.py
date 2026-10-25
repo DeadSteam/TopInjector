@@ -1,5 +1,6 @@
 """Shared fixtures: in-memory SQLite database and an HTTP client bound to the app."""
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
@@ -77,3 +78,26 @@ async def register(client: AsyncClient, email: str = "owner@example.com") -> dic
 @pytest_asyncio.fixture
 async def auth_headers(client) -> dict[str, str]:
     return await register(client)
+
+
+def bearer(user_id) -> dict[str, str]:
+    """Authorization header for a user inserted directly into the test DB."""
+    from shared.auth.jwt_utils import create_access_token
+
+    return {"Authorization": f"Bearer {create_access_token(user_id)}"}
+
+
+@pytest_asyncio.fixture
+async def logged_in(client, auth_headers) -> None:
+    """Make the test client send a freshly registered user's token on every request."""
+    client.headers.update(auth_headers)
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_limiter():
+    """Clear the in-process login limiter so one test's attempts don't bleed into the next."""
+    from shared.ratelimit import login_limiter
+
+    login_limiter.reset()
+    yield
+    login_limiter.reset()

@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.auth.access import accessible_project_ids, request_user_id
 from shared.database.session import get_session
 from services.queue_service.domain.models import QueueTask
 
-router = APIRouter(tags=["analytics"])
+# Every route requires auth and only counts tasks of projects the caller may access.
+router = APIRouter(tags=["analytics"], dependencies=[Depends(request_user_id)])
 
 
 def _parse_pid(project_id: str) -> UUID | None:
@@ -31,27 +33,30 @@ async def get_summary(
     end_date: str = Query(default=""),
     suggestion_mode: str | None = Query(default=None),
     position_threshold: int | None = Query(default=None, ge=1, le=200),
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return aggregate stats: total clicks, avg position, geo distribution."""
+    """Aggregate stats: total_clicks (completed tasks), avg_position (over clicks with a reported position)
+    and completed_rate (completed / finished)."""
     from services.project_service.domain.models import Query as _QueryModel
 
     pid = _parse_pid(project_id)
-    where_conditions = [QueueTask.status == "completed"]
+    scope = [QueueTask.project_id.in_(accessible_project_ids(user_id))]  # projects + period
     if pid:
-        where_conditions.append(QueueTask.project_id == pid)
+        scope.append(QueueTask.project_id == pid)
     if start_date:
         try:
             sd = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-            where_conditions.append(QueueTask.created_at >= sd)
+            scope.append(QueueTask.created_at >= sd)
         except (ValueError, TypeError):
             pass
     if end_date:
         try:
             ed = (datetime.fromisoformat(end_date) + __import__('datetime').timedelta(days=1)).replace(tzinfo=timezone.utc)
-            where_conditions.append(QueueTask.created_at < ed)
+            scope.append(QueueTask.created_at < ed)
         except (ValueError, TypeError):
             pass
+    where_conditions = [QueueTask.status == "completed", *scope]
     if position_threshold is not None and position_threshold > 0:
         where_conditions.append(QueueTask.position.isnot(None))
         where_conditions.append(QueueTask.position > position_threshold)
@@ -82,15 +87,25 @@ async def get_summary(
 
         where_conditions.append(QueueTask.id.in_(allowed_ids))
 
-    # Total completed clicks (respects all filters)
-    result = await session.execute(
-        select(func.count(QueueTask.id)).where(*where_conditions)
-    )
-    completed_count = result.scalar() or 0
+    # Total completed clicks and their average position (respects all filters)
+    completed_count, avg_position = (await session.execute(
+        select(func.count(QueueTask.id), func.avg(QueueTask.position)).where(*where_conditions)
+    )).one()
+
+    # Share of finished tasks (completed or not found) where the agent found the site
+    outcomes = dict((await session.execute(
+        select(QueueTask.status, func.count())
+        .where(*scope, QueueTask.status.in_(["completed", "not_found"]))
+        .group_by(QueueTask.status)
+    )).all())
+    finished = outcomes.get("completed", 0) + outcomes.get("not_found", 0)
 
     return {
         "project_id": project_id or "",
+        "total_clicks": completed_count,
         "completed_clicks": completed_count,
+        "avg_position": round(float(avg_position), 2) if avg_position is not None else None,
+        "completed_rate": round(outcomes.get("completed", 0) / finished, 4) if finished else None,
         "geo_distribution": {},
         "date_range": {"start": start_date or "", "end": end_date or ""},
     }
@@ -100,6 +115,7 @@ async def get_summary(
 async def get_positions(
     project_id: str = Query(default=""),
     query_text: str = Query(default=""),
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Return position history for queries."""
@@ -117,13 +133,17 @@ async def get_clicks(
     end_date: str = Query(default=""),
     suggestion_mode: str | None = Query(default=None),
     position_threshold: int | None = Query(default=None, ge=1, le=200),
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Return click timeline data for charts with optional date range and filters."""
     from services.project_service.domain.models import Query as _QueryModel
 
     pid = _parse_pid(project_id)
-    where_conditions = [QueueTask.status == "completed"]
+    where_conditions = [
+        QueueTask.status == "completed",
+        QueueTask.project_id.in_(accessible_project_ids(user_id)),
+    ]
     if pid:
         where_conditions.append(QueueTask.project_id == pid)
     if start_date:
@@ -196,6 +216,7 @@ async def get_clicks(
 @router.get("/tracking/positions")
 async def get_tracking_positions(
     project_id: str = Query(default=""),
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Return detailed position tracking history with dates for chart rendering."""
@@ -211,6 +232,7 @@ async def get_tracking_positions(
         select(QueueTask.position, QueueTask.created_at)
         .where(
             QueueTask.project_id == pid,
+            QueueTask.project_id.in_(accessible_project_ids(user_id)),
             QueueTask.status == "completed",
             QueueTask.position.isnot(None),
         )
@@ -245,15 +267,22 @@ async def get_top_ranges(
     project_id: str = Query(default=""),
     suggestion_mode: str | None = Query(default=None),
     position_threshold: int | None = Query(default=None, ge=1, le=200),
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return click distribution by TOP position ranges and avg position per range."""
+    """Return click distribution by TOP position ranges and avg position per range.
+
+    no_position_clicks: completed clicks for which the agent reported no position.
+    """
     from services.project_service.domain.models import Query as _QueryModel
 
     pid = _parse_pid(project_id)
 
     # Build WHERE clause
-    where_conditions = [QueueTask.status == "completed"]
+    where_conditions = [
+        QueueTask.status == "completed",
+        QueueTask.project_id.in_(accessible_project_ids(user_id)),
+    ]
     if pid:
         where_conditions.append(QueueTask.project_id == pid)
 
@@ -272,7 +301,6 @@ async def get_top_ranges(
         result = await session.execute(
             select(QueueTask.id, QueueTask.query_id, QueueTask.position)
             .where(*where_conditions)
-            .where(QueueTask.position.isnot(None))
         )
         rows = result.all()
 
@@ -290,6 +318,7 @@ async def get_top_ranges(
                     continue
             filtered.append(row)
         rows = filtered
+        no_position_clicks = sum(1 for r in rows if r.position is None)
 
         # Apply position_threshold: keep only positions > threshold
         if position_threshold is not None and position_threshold > 0:
@@ -346,6 +375,9 @@ async def get_top_ranges(
         )
 
         rows = result.all()
+        no_position_clicks = (await session.execute(
+            select(func.count(QueueTask.id)).where(*where_conditions, QueueTask.position.is_(None))
+        )).scalar() or 0
         ranges = [
             {
                 "label": row[0],
@@ -368,5 +400,6 @@ async def get_top_ranges(
         "project_id": project_id or "",
         "total_clicks": total_clicks,
         "ranges": ranges,
+        "no_position_clicks": no_position_clicks,
         "overall_avg_position": round(overall_avg, 2) if overall_avg is not None else None,
     }

@@ -17,22 +17,29 @@ dependencies = [
     "httpx>=0.28.0",
     "aio-pika>=9.5.0",
     "celery>=5.4.0",
-    "django-celery-beat>=2.7.0",
     "supervisor>=4.3.0",
     "python-multipart>=0.0.20",
+    "tzdata>=2024.1",  # zoneinfo data for the scheduler (Windows has no system tz database)
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
     "aiosqlite>=0.20.0",
+    "ruff>=0.8.0",
 ]
+
+[tool.uv]
+package = false  # an app, not a library: `uv sync` installs dependencies only
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# SQLAlchemy warnings (e.g. cartesian products from a missing join) are bugs, not noise
+filterwarnings = ["error::sqlalchemy.exc.SAWarning"]
 
 [tool.ruff]
 target-version = "py312"

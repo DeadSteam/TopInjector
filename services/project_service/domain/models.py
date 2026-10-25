@@ -51,9 +51,9 @@ class Project(UUIDModel):
     auto_stop_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # automatic project stop date/time
     balance_credits: Mapped[float] = mapped_column(Integer, nullable=False, default=0)  # project credits in kopeks (integer)
 
-    __table_args__ = (UniqueConstraint("user_id", "domain", name="uq_projects_user_domain"),)
 
-    group: Mapped["ProjectGroup"] = relationship(back_populates="projects")
+    # Loaded together with the project: lazy loading isn't possible in async code (MissingGreenlet)
+    group: Mapped["ProjectGroup | None"] = relationship(back_populates="projects", lazy="selectin")
 
     queries: Mapped[list["Query"]] = relationship(
         back_populates="project", cascade="all, delete-orphan", passive_deletes=True
@@ -175,7 +175,7 @@ class GeoCodePreset(UUIDModel):
     country_code: Mapped[str] = mapped_column(String(3), nullable=False, server_default="ru")
     region_name: Mapped[str] = mapped_column(String(200), nullable=False)
     city_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    is_city_center: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    is_city_center: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     search_aliases: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (

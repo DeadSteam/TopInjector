@@ -107,76 +107,80 @@
 
 ## 6. External API (`/api/external/v1/`)
 
-Auth via `X-Auth-Token` header (API key from /api/users/api-tokens)
+Auth: `X-Auth-Token: tl_...` — a token created in Settings (`POST /api/users/api-tokens` with `project_id`).
+Each token is bound to **one project**; every call below acts on that project only. Addressing another
+project id answers `404`.
 
-### POST `/api/external/v1/projects`
-**Request:** `{ "name": "...", "domain": "...", "strategy_type": "daily", "daily_limit": 500 }`
-**Response 200:** `{ ...project data with id }`
+### GET `/api/external/v1/health`
+**Response 200:** `{ "status": "ok" }` (no auth)
+
+### POST `/api/external/v1/projects` (Auth: `Authorization: Bearer <jwt>`)
+**Request:** `{ "name": "...", "domain": "...", "region": "ru", "strategy_type": "daily", "daily_limit": 500 }`
+**Response 200:** `{ "id": "...", "name": "...", "domain": "..." }`
 
 ### GET `/api/external/v1/projects`
-**Response 200:** `[ { "id": "...", "name": "...", "domain": "..." } ]`
+**Response 200:** `{ "projects": [{ "id", "name", "domain", "region", "strategy_type", "daily_limit", "is_active", "queries_count", "queue_size" }] }`
 
 ### PUT `/api/external/v1/projects/{id}`
-**Request:** `{ "name": "NewName" }`
-**Response 200:** Updated project
+**Request:** any of `{ "name", "domain", "region", "strategy_type", "daily_limit" }`
+**Response 200:** `{ "id": "...", "updated": true }`
 
 ### PATCH `/api/external/v1/projects/{id}/status`
-**Request:** `{ "is_active": true }`
-**Response 200:** Updated project
+**Request:** `{ "is_active": false }` — an inactive project keeps its token but gets no tasks from `/queue/claim`
+**Response 200:** `{ "id": "...", "is_active": false }`
 
 ### DELETE `/api/external/v1/projects/{id}`
 **Response 200:** `{ "deleted": true }`
 
 ### POST `/api/external/v1/terms/upsert`
-**Request:** `{ "project_id": "...", "terms": [{ "text": "query" }] }`
-**Response 200:** `{ "created": 10, "updated": 5, "deleted": 0 }`
+Matches queries by `text`: existing ones are updated and keep their id (and history), new ones are created,
+queries not mentioned are left alone.
+**Request:** `{ "queries": [{ "text": "купить слона", "url": "...", "click_url": "...", "geo": {}, "daily_clicks": 5 }] }`
+**Response 200:** `{ "created": 1, "updated": 3 }`
 
-### GET `/api/external/v1/terms?project_id=xxx`
-**Response 200:** `{ "terms": [...], "total": N }`
+### GET `/api/external/v1/terms`
+**Response 200:** `{ "terms": [{ "id", "text", "url", "click_url", "geo", "daily_clicks", "position" }], "total": N }`
 
 ### POST `/api/external/v1/queue/push`
-**Request:** `{ "project_id": "...", "tasks": [{ "query_id": "...", "click_url": "..." }] }`
-**Response 200:** `{ "queued": 5, "already_exists": 0 }`
+**Request:** `{ "tasks": [{ "click_url": "...", "query_id": "...", "source": "strategy", "geo": {} }] }`
+`query_id` must belong to the project (`422` otherwise). A URL that already has a pending task is skipped.
+**Response 200:** `{ "queued": 5, "already_exists": 1 }`
 
-### GET `/api/external/v1/queue?project_id=xxx&status=pending`
-**Response 200:** `{ "tasks": [...], "total": N }`
+### POST `/api/external/v1/queue/claim`
+Takes up to `limit` (1–100, default 10) pending tasks, oldest first, and marks them `in_progress`, so each task
+goes to exactly one agent. Tasks left `in_progress` for 30+ minutes become `stuck`.
+**Request:** `{ "limit": 10 }`
+**Response 200:** `{ "tasks": [{ "id", "status", "source", "query_id", "query_text", "click_url", "geo", "created_at" }] }`
 
-### POST `/api/external/v1/queue/clear`
-**Request:** `{ "project_id": "..." }`
-**Response 200:** `{ "deleted": N }`
+### GET `/api/external/v1/queue?status=pending`
+Read-only listing (does not claim). **Response 200:** `{ "tasks": [...], "total": N }`
 
 ### POST `/api/external/v1/queue/results`
-**Request:** `{ "results": [{ "task_id": "...", "status": "completed" }] }`
-**Response 200:** `{ "updated": N, "errors": [] }`
+**Request:** `{ "results": [{ "task_id": "...", "status": "completed", "position": 5 }] }`
+`status` ∈ `pending | in_progress | completed | not_found | stuck` (`422` otherwise).
+**Response 200:** `{ "updated": N, "errors": [{ "task_id": "...", "error": "not found" }] }`
 
-### POST `/api/external/v1/users`
-**Request:** `{ "email": "...", "display_name": "...", "role": "user" }`
-**Response 200:** `{ ...user data with id and balance }`
+### POST `/api/external/v1/queue/clear`
+Deletes pending and in-progress tasks. **Response 200:** `{ "deleted": N }`
 
-### GET `/api/external/v1/users`
-**Response 200:** `[ { "id": "...", "email": "...", "balance": 0 } ]`
+### POST `/api/external/v1/balance/add`
+**Request:** `{ "amount": 100, "description": "..." }` — rubles. **Response 200:** `{ "project_id", "balance", "balance_rub", "added" }`
 
-### PUT `/api/external/v1/users/{id}` (Auth: X-Auth-Token)
-**Request:** `{ "display_name": "NewName" }`
-**Response 200:** Updated user
+### POST `/api/external/v1/balance/set`
+**Request:** `{ "balance": 500 }` — rubles. **Response 200:** `{ "project_id", "balance", "balance_rub" }`
 
-### PATCH `/api/external/v1/users/{id}/status` (Auth: X-Auth-Token)
-**Request:** `{ "is_active": true }`
-**Response 200:** Updated user
-
-### POST `/api/external/v1/balance/add` (Auth: X-Auth-Token)
-**Request:** `{ "user_id": "...", "amount": 100 }`
-**Response 200:** `{ "user_id": "...", "balance": 500, "added": 100 }`
-
-### POST `/api/external/v1/balance/set` (Auth: X-Auth-Token)
-**Request:** `{ "user_id": "...", "amount": 500 }`
-**Response 200:** `{ "user_id": "...", "balance": 500 }`
+### GET / POST `/api/external/v1/boosts`
+GET: `{ "boosts": [{ "id", "query_text", "boost_min", "boost_max", "frequency" }], "total": N }`
+POST: `{ "query_text": "...", "boost_min": 1, "boost_max": 3, "frequency": 1 }` — creates the query if needed.
 
 ### GET `/api/external/v1/project-groups`
-**Response 200:** `[ { "id": "...", "name": "...", "project_count": 0 } ]`
+**Response 200:** `{ "groups": [{ "id", "name", "domain", "query_count" }], "total": 1 }`
 
-### GET `/api/external/v1/boosts?project_id=xxx`
-**Response 200:** `[ { "id": "...", "name": "...", "interval_minutes": 180, "is_active": true } ]`
+### GET `/api/external/v1/external/status`
+**Response 200:** `{ "status": "ok", "project": { "id", "name", "domain", "queue_stats": {...} } | null }`
+
+### `/api/external/v1/users` (POST, GET, PUT `/{id}`, PATCH `/{id}/status`)
+**Not implemented yet — `501`.** There is no organization model to invite users into.
 
 ---
 
@@ -193,8 +197,8 @@ Auth via `X-Auth-Token` header (API key from /api/users/api-tokens)
 **Response 200:** `[ { "id": "...", "name": "Main", "token": "tl_..." } ]`
 
 ### POST `/api/users/api-tokens`
-**Request:** `{ "name": "New Token" }`
-**Response 200:** `{ "id": "...", "name": "...", "token": "tl_..." }`
+**Request:** `{ "name": "Mobile", "project_id": "..." }` — a project you own; one token per project (`409` if one exists)
+**Response 200:** `{ "id": "...", "name": "...", "token": "tl_...", "project_id": "...", "project_name": "..." }`
 
 ---
 

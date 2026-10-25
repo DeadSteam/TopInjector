@@ -1,8 +1,11 @@
 """Notification routes. Base URL prefix handled by main.py."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(tags=["notifications"])
+from shared.auth.access import request_user_id
+
+# Every notification route requires an authenticated caller.
+router = APIRouter(tags=["notifications"], dependencies=[Depends(request_user_id)])
 
 
 @router.get("/")

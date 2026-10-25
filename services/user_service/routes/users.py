@@ -2,12 +2,16 @@
 
 from uuid import UUID
 
+import bcrypt
 from fastapi import APIRouter, Body, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.auth.access import check_project_access
 from shared.auth.jwt_utils import get_current_user
+from shared.config import settings
 from shared.database.session import get_session
+from shared.validation import require_fields, validate_password
 from services.auth_service.domain.models import User
 
 router = APIRouter(tags=["users"])
@@ -16,14 +20,20 @@ router = APIRouter(tags=["users"])
 @router.get("/profile")
 async def get_profile(
     user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ):
-    """Get current user profile. Requires valid JWT."""
+    """Current user's profile; balance is the sum of the user's own project balances, in rubles."""
+    from services.project_service.domain.models import Project
+
+    credits = (await session.execute(
+        select(func.coalesce(func.sum(Project.balance_credits), 0)).where(Project.user_id == user.id)
+    )).scalar_one()
     return {
         "id": str(user.id),
         "email": user.email,
         "display_name": user.display_name or "",
-        "balance": 0,
-        "plan": "free",
+        "balance": round(credits / 100, 2),
+        "is_admin": user.email.lower() in settings.admin_email_set,
         "is_active": bool(user.is_active),
     }
 
@@ -52,16 +62,24 @@ async def list_api_tokens(
     """List API tokens for the authenticated user. Requires valid JWT."""
     from services.project_service.domain.models import ProjectToken
 
-    result = await session.execute(select(ProjectToken).where(ProjectToken.user_id == user.id))
-    tokens = result.scalars().all()
+    from services.project_service.domain.models import Project
+
+    result = await session.execute(
+        select(ProjectToken, Project.name)
+        .outerjoin(Project, Project.id == ProjectToken.project_id)
+        .where(ProjectToken.user_id == user.id)
+        .order_by(ProjectToken.created_at)
+    )
     return [
         {
             "id": str(t.id),
             "name": t.name or "",
             "token": t.token_string[:8] + "..." if len(t.token_string) > 8 else "***",
+            "project_id": str(t.project_id) if t.project_id else None,
+            "project_name": project_name,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
-        for t in tokens
+        for t, project_name in result.all()
     ]
 
 
@@ -71,22 +89,28 @@ async def create_api_token(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Create a new API token for the authenticated user. Requires valid JWT."""
+    """Create an external-API token (X-Auth-Token) bound to one of the user's projects."""
     import secrets
+    from uuid import uuid4
 
     from services.project_service.domain.models import ProjectToken
 
-    name = body.get("name", "API Token")
-    token_string = f"tl_{secrets.token_urlsafe(32)}"
-    project_token = ProjectToken(
-        id=UUID(int=0),  # placeholder — real UUID created via uuid4 below
-        user_id=user.id,
-        name=name,
-        token_string=token_string,
+    # The external API resolves the project from the token, so a token must name one the user owns.
+    require_fields(body, "project_id")
+    project = await check_project_access(session, body["project_id"], user.id, owner_only=True)
+    existing = await session.execute(
+        select(ProjectToken.id).where(ProjectToken.user_id == user.id, ProjectToken.project_id == project.id)
     )
+    if existing.first():
+        raise HTTPException(status_code=409, detail="У этого проекта уже есть токен — удалите старый, чтобы выпустить новый")
 
-    from uuid import uuid4
-    project_token.id = uuid4()
+    project_token = ProjectToken(
+        id=uuid4(),
+        user_id=user.id,
+        project_id=project.id,
+        name=body.get("name") or "API Token",
+        token_string=f"tl_{secrets.token_urlsafe(32)}",
+    )
     session.add(project_token)
     await session.commit()
     await session.refresh(project_token)
@@ -95,6 +119,8 @@ async def create_api_token(
         "id": str(project_token.id),
         "name": project_token.name,
         "token": project_token.token_string,
+        "project_id": str(project.id),
+        "project_name": project.name,
         "created_at": project_token.created_at.isoformat() if project_token.created_at else None,
     }
 
@@ -145,23 +171,13 @@ async def update_messenger_settings(
     session: AsyncSession = Depends(get_session),
 ):
     """Update messenger integration settings (JSON)."""
-    from services.auth_service.domain.models import User as UserModel
-
-    current = getattr(user, "messenger_settings", {}) or {}
-    if "telegram_webhook_url" in body:
-        current["telegram_webhook_url"] = body["telegram_webhook_url"]
-    if "max_connector_id" in body:
-        current["max_connector_id"] = body["max_connector_id"]
-    setattr(user, "messenger_settings", current)
-    # Update via SQLAlchemy directly since MessengerSettings may not be a model
-    from sqlalchemy import select as sa_select
-    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
-    u = q.scalar_one_or_none()
-    if u:
-        u.messenger_settings = current  # type: ignore[attr-defined]
+    current = dict(user.messenger_settings or {})
+    for key in ("telegram_webhook_url", "max_connector_id"):
+        if key in body:
+            current[key] = body[key]
+    user.messenger_settings = current
     await session.commit()
-    await session.refresh(user)
-    return {"updated": True, "settings": getattr(user, "messenger_settings", {})}
+    return {"updated": True, "settings": current}
 
 
 @router.get("/settings/external-services")
@@ -183,22 +199,13 @@ async def update_external_services(
     session: AsyncSession = Depends(get_session),
 ):
     """Update external services configuration (XML River / XMLStock)."""
-    from sqlalchemy import select as sa_select
-    from services.auth_service.domain.models import User as UserModel
-
-    current = getattr(user, "external_services", {}) or {}
-    if "xml_river" in body:
-        current["xml_river"] = body["xml_river"]
-    if "xml_stock" in body:
-        current["xml_stock"] = body["xml_stock"]
-    setattr(user, "external_services", current)
-    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
-    u = q.scalar_one_or_none()
-    if u:
-        u.external_services = current  # type: ignore[attr-defined]
+    current = dict(user.external_services or {})
+    for key in ("xml_river", "xml_stock"):
+        if key in body:
+            current[key] = body[key]
+    user.external_services = current
     await session.commit()
-    await session.refresh(user)
-    return {"updated": True, "settings": getattr(user, "external_services", {})}
+    return {"updated": True, "settings": current}
 
 
 @router.post("/password")
@@ -208,21 +215,21 @@ async def change_password(
     session: AsyncSession = Depends(get_session),
 ):
     """Change user password. Requires current_password + new_password."""
-    from passlib.context import CryptContext
-
-    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     current_pw = body.get("current_password", "")
     new_pw = body.get("new_password", "")
 
     if not current_pw or not new_pw:
         raise HTTPException(status_code=400, detail="current_password and new_password are required")
-    if len(new_pw) < 6:
-        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    validate_password(new_pw)
 
-    if not pwd_ctx.verify(current_pw, user.hashed_password):  # type: ignore[attr-defined]
+    try:
+        current_ok = bcrypt.checkpw(current_pw.encode("utf-8"), user.password_hash.encode("utf-8"))
+    except ValueError:
+        current_ok = False
+    if not current_ok:
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    user.hashed_password = pwd_ctx.hash(new_pw)  # type: ignore[attr-defined]
+    user.password_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     await session.commit()
     return {"updated": True}
 
@@ -282,6 +289,12 @@ async def get_avatar(
 # --- Stop words management -------------------------------------------------- #
 
 
+async def _save_stop_words(user: User, session: AsyncSession, words: list[str]) -> None:
+    """Persist stop words inside messenger_settings (assign a new dict so the JSON change is tracked)."""
+    user.messenger_settings = {**(user.messenger_settings or {}), "stop_words": words}
+    await session.commit()
+
+
 @router.get("/settings/stop-words")
 async def get_stop_words(
     user: User = Depends(get_current_user),
@@ -298,23 +311,11 @@ async def update_stop_words(
     session: AsyncSession = Depends(get_session),
 ):
     """Update user's stop words list. Accepts {stop_words: [...]}."""
-    from services.auth_service.domain.models import User as UserModel
-
-    current = getattr(user, "messenger_settings", {}) or {}
     words = body.get("stop_words", [])
     # Deduplicate and lowercase
-    current["stop_words"] = list(set(w.strip().lower() for w in words if w.strip()))
-    setattr(user, "messenger_settings", current)
-
-    from sqlalchemy import select as sa_select
-    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
-    u = q.scalar_one_or_none()
-    if u:
-        u.messenger_settings = current  # type: ignore[attr-defined]
-    await session.commit()
-    await session.refresh(user)
-
-    return {"updated": True, "stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
+    stop_words = list(set(w.strip().lower() for w in words if w.strip()))
+    await _save_stop_words(user, session, stop_words)
+    return {"updated": True, "stop_words": stop_words}
 
 
 @router.post("/settings/stop-words/add")
@@ -328,23 +329,12 @@ async def add_stop_word(
     if not w:
         raise HTTPException(status_code=400, detail="Stop word cannot be empty")
 
-    current = getattr(user, "messenger_settings", {}) or {}
-    words = current.get("stop_words", [])
+    words = list((user.messenger_settings or {}).get("stop_words", []))
     if w in words:
         return {"added": False, "duplicate": True, "stop_words": words}
     words.append(w)
-    current["stop_words"] = words
-    setattr(user, "messenger_settings", current)
-
-    from sqlalchemy import select as sa_select
-    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
-    u = q.scalar_one_or_none()
-    if u:
-        u.messenger_settings = current  # type: ignore[attr-defined]
-    await session.commit()
-    await session.refresh(user)
-
-    return {"added": True, "stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
+    await _save_stop_words(user, session, words)
+    return {"added": True, "stop_words": words}
 
 
 @router.delete("/settings/stop-words/{word}")
@@ -355,19 +345,6 @@ async def remove_stop_word(
 ):
     """Remove a single stop word."""
     w = word.strip().lower()
-    current = getattr(user, "messenger_settings", {}) or {}
-    words = current.get("stop_words", [])
-    if w in words:
-        words.remove(w)
-    current["stop_words"] = words
-    setattr(user, "messenger_settings", current)
-
-    from sqlalchemy import select as sa_select
-    q = await session.execute(sa_select(UserModel).where(UserModel.id == user.id))
-    u = q.scalar_one_or_none()
-    if u:
-        u.messenger_settings = current  # type: ignore[attr-defined]
-    await session.commit()
-    await session.refresh(user)
-
-    return {"stop_words": getattr(user, "messenger_settings", {}).get("stop_words", [])}
+    words = [x for x in (user.messenger_settings or {}).get("stop_words", []) if x != w]
+    await _save_stop_words(user, session, words)
+    return {"stop_words": words}

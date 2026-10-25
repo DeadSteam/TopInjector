@@ -52,6 +52,30 @@ def test_migrations_match_models(sqlite_db):
     assert diff == []
 
 
+def test_timestamp_columns_have_server_defaults(sqlite_db):
+    """Models rely on the database filling created_at/updated_at; app tests build tables from the
+    models, so only the migrated schema shows a missing default (inserts fail on Postgres)."""
+    async_url, sync_url = sqlite_db
+    command.upgrade(_config(async_url), "head")
+
+    insp = inspect(create_engine(sync_url))
+    missing = [
+        f"{table}.{col['name']}"
+        for table in insp.get_table_names()
+        for col in insp.get_columns(table)
+        if col["name"] in ("created_at", "updated_at") and col.get("default") is None
+    ]
+    assert missing == []
+
+
+def test_revision_ids_fit_alembic_version_column():
+    """Postgres stores revision ids in alembic_version.version_num VARCHAR(32); SQLite doesn't check."""
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_config("sqlite://"))
+    assert [r.revision for r in script.walk_revisions() if len(r.revision) > 32] == []
+
+
 def test_downgrade_base_drops_every_table(sqlite_db):
     async_url, sync_url = sqlite_db
     cfg = _config(async_url)

@@ -1,19 +1,19 @@
 """Celery worker configuration."""
 
-import os
-
 from celery import Celery
 
-_redis_host = os.getenv("REDIS_HOST", "localhost")
+from shared.config import settings
+
+_redis = f"redis://{settings.redis_auth}{settings.redis_host}:{settings.redis_port}"
 
 app = Celery(
     "topinjector_workers",
-    broker=f"redis://{_redis_host}:6379/10",
-    backend=f"redis://{_redis_host}:6379/11",
+    broker=f"{_redis}/10",
+    backend=f"{_redis}/11",
 )
 app.config_from_object({
-    "broker_url": f"redis://{_redis_host}:6379/10",
-    "result_backend": f"redis://{_redis_host}:6379/11",
+    "broker_url": f"{_redis}/10",
+    "result_backend": f"{_redis}/11",
     "task_serializer": "json",
     "result_serializer": "json",
     "accept_content": ["json"],

@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",  # under /api so nginx routes it to the backend
     )
 
     app.add_middleware(
@@ -30,16 +31,19 @@ def create_app() -> FastAPI:
     )
 
     # ---- Register service routers ----------------------------------------- #
-    from services.auth_service.routes import auth as auth_router
-    from services.user_service.routes import users as user_router
-    from services.project_service.routes import projects as project_router
-    from services.queue_service.routes import queue as queue_router
     from services.analytics_service.routes import analytics as analytics_router
+    from services.auth_service.routes import auth as auth_router
+    from services.external_api_service.routes import external as external_router
     from services.notification_service.routes import (
         notifications as notification_router,
     )
-    from services.external_api_service.routes import external as external_router
+    from services.project_service.routes import external_services as external_services_router
+    from services.project_service.routes import plans as plans_router
+    from services.project_service.routes import projects as project_router
     from services.project_service.routes import warmups as warmup_router
+    from services.project_service.routes import whitelabel as whitelabel_router
+    from services.queue_service.routes import queue as queue_router
+    from services.user_service.routes import users as user_router
 
     # Prefixes live here only; module routers declare paths relative to them.
     app.include_router(auth_router.router, prefix="/api/auth")
@@ -50,6 +54,9 @@ def create_app() -> FastAPI:
     app.include_router(notification_router.router, prefix="/api/notifications")
     app.include_router(external_router.router, prefix="/api/external/v1")
     app.include_router(warmup_router.router, prefix="/api/warmups")
+    app.include_router(plans_router.router, prefix="/api")
+    app.include_router(external_services_router.router, prefix="/api/external-services")
+    app.include_router(whitelabel_router.router, prefix="/api/whitelabel")
 
     @app.get("/health")
     async def health():

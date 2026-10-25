@@ -1,7 +1,7 @@
 """Audit log entry model for tracking project changes."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
@@ -9,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.database.base import UUIDModel
 from shared.database.types import JSONType
+
+if TYPE_CHECKING:
+    from services.project_service.domain.models import Project
 
 
 class AuditLogEntry(UUIDModel):
@@ -28,4 +31,4 @@ class AuditLogEntry(UUIDModel):
     new_values: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)  # additional context
 
-    project: Mapped["Project"] = relationship()  # type: ignore[name-defined]
+    project: Mapped["Project"] = relationship()

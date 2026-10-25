@@ -5,13 +5,29 @@ import csv as _csv
 import io as _io
 import json as _json
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy import func, select, case as sa_case, text as sa_text, cast as sa_cast, and_, or_
 from sqlalchemy.types import Date as sa_Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.auth.access import (
+    accessible_project_ids,
+    authorize_project_path,
+    request_user_id,
+    require_project_owner,
+)
+from shared.auth.jwt_utils import decode_access_token
+from shared.config import settings
 from shared.database.session import get_session
+from shared.validation import csv_safe, ensure_safe_url, parse_uuid, require_fields
+from shared.validation import is_unsafe_url as _is_unsafe_url
+# Admin projects get effectively infinite balance (max signed int64).
+_ADMIN_BALANCE = 9_223_372_036_854_775_807
+
+from services.project_service.balance import add_balance, balance_payload, set_balance
+from services.project_service.search_urls import search_click_url
 from services.project_service.domain.models import (
     Project,
     ProjectToken,
@@ -29,7 +45,8 @@ from services.project_service.repositories.query_repo import QueryRepository
 from services.queue_service.domain.models import QueueTask
 from services.queue_service.repositories.task_repo import QueueTaskRepository
 
-router = APIRouter(tags=["projects"])
+# Every route requires auth; routes with a project id in the path also check access to it.
+router = APIRouter(tags=["projects"], dependencies=[Depends(authorize_project_path)])
 
 
 # --- helpers --------------------------------------------------------------- #
@@ -75,12 +92,44 @@ async def _user_id_from_request(request: Request) -> UUID | None:
 #  Project Groups                                                             #
 # --------------------------------------------------------------------------- #
 
+async def _own_group_or_404(session: AsyncSession, group_id: str, user_id: UUID) -> ProjectGroup:
+    try:
+        gid = UUID(group_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Group not found")
+    result = await session.execute(
+        select(ProjectGroup).where(ProjectGroup.id == gid, ProjectGroup.user_id == user_id)
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+
+_EDITABLE_PROJECT_FIELDS = {
+    "name", "domain", "region", "strategy_type", "daily_limit", "is_active", "group_id",
+    "geo_settings", "integrations", "scheduling_window", "query_modifications",
+}
+
+
+async def _own_group_id(session: AsyncSession, raw: object, owner_id: UUID) -> UUID | None:
+    """Validate that a group id (or empty) belongs to the project's owner."""
+    if not raw:
+        return None
+    gid = parse_uuid(raw, "group_id")
+    found = await session.execute(select(ProjectGroup.id).where(ProjectGroup.id == gid, ProjectGroup.user_id == owner_id))
+    if found.first() is None:
+        raise HTTPException(status_code=422, detail="Unknown group_id")
+    return gid
+
+
 @router.get("/groups")
 async def list_groups(
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """List all groups for the current user."""
-    result = await session.execute(select(ProjectGroup))
+    result = await session.execute(select(ProjectGroup).where(ProjectGroup.user_id == user_id))
     groups = result.scalars().all()
     return [
         {
@@ -95,11 +144,14 @@ async def list_groups(
 @router.post("/groups")
 async def create_group(
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new project group."""
+    require_fields(body, "name")
     group = ProjectGroup(
         id=uuid4(),
+        user_id=user_id,
         name=body["name"],
         icon=body.get("icon", ""),
     )
@@ -113,13 +165,11 @@ async def create_group(
 async def update_group(
     group_id: str,
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Update a project group."""
-    result = await session.execute(select(ProjectGroup).where(ProjectGroup.id == UUID(group_id)))
-    group = result.scalar_one_or_none()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = await _own_group_or_404(session, group_id, user_id)
     for key in ("name", "icon"):
         if key in body:
             setattr(group, key, body[key])
@@ -131,19 +181,14 @@ async def update_group(
 @router.delete("/groups/{group_id}")
 async def delete_group(
     group_id: str,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a project group (un-assigns projects from it)."""
-    result = await session.execute(select(ProjectGroup).where(ProjectGroup.id == UUID(group_id)))
-    group = result.scalar_one_or_none()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = await _own_group_or_404(session, group_id, user_id)
     # Un-assign all projects
-    await session.execute(
-        select(Project).where(Project.group_id == UUID(group_id))
-    )
     projects_result = (await session.execute(
-        select(Project).where(Project.group_id == UUID(group_id))
+        select(Project).where(Project.group_id == group.id)
     )).scalars().all()
     for p in projects_result:
         p.group_id = None  # type: ignore[attr-defined]
@@ -166,7 +211,7 @@ _AVAILABLE_INTEGRATIONS: list[dict] = [
 
 @router.get("/integrations")
 async def list_integrations(
-    request: Request,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Return available integration types for the current user."""
@@ -177,16 +222,18 @@ async def list_integrations(
         select(_Project.integrations)
         .where(
             and_(  # type: ignore[arg-type]
+                _Project.id.in_(accessible_project_ids(user_id)),
                 _Project.integrations.isnot(None),
-                cast(_Project.integrations['integration_type'], sa_text).astext != 'default',
+                _Project.integrations['integration_type'].as_string() != 'default',
             )
         )
     )
+    known_keys = {i["key"] for i in _AVAILABLE_INTEGRATIONS}
     custom_keys: set[str] = set()
     for (integ,) in existing_integrations_result.all():
         if integ and isinstance(integ, dict):
             key = integ.get("integration_type")
-            if key and key != "default":
+            if key and key not in known_keys:
                 custom_keys.add(key)
 
     # Build full list: defaults + custom integrations from projects
@@ -204,26 +251,13 @@ async def list_integrations(
 @router.post("/")
 async def create_project(
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     project_repo: ProjectRepository = Depends(_project_repo),
     session: AsyncSession = Depends(get_session),
 ):
-    """Create a new project."""
-    user_id_raw = body.get("user_id")
-    if user_id_raw:
-        try:
-            user_id = UUID(user_id_raw)  # type: ignore[assignment]
-        except ValueError:
-            user_id = uuid4()
-    else:
-        user_id = uuid4()
-
-    group_id: UUID | None = None
-    gid = body.get("group_id")
-    if gid:
-        try:
-            group_id = UUID(gid)  # type: ignore[assignment]
-        except ValueError:
-            pass
+    """Create a new project owned by the authenticated user."""
+    require_fields(body, "name", "domain")
+    group_id = await _own_group_id(session, body.get("group_id"), user_id)
 
     project = Project(
         id=uuid4(),
@@ -241,6 +275,18 @@ async def create_project(
     )
     project = await project_repo.create(project)
 
+    # Admin-owned projects get effectively infinite balance.
+    try:
+        from services.auth_service.domain.models import User as _UserModel
+
+        owner = (await session.execute(
+            select(_UserModel).where(_UserModel.id == user_id)
+        )).scalar_one_or_none()
+        if owner and owner.is_admin:  # type: ignore[attr-defined]
+            project.balance_credits = _ADMIN_BALANCE  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     # Record audit log entry
     try:
         await record_audit_entry(
@@ -253,12 +299,13 @@ async def create_project(
     except Exception:
         pass
 
+    await session.commit()
     return {"id": str(project.id), "name": project.name, "domain": project.domain}
 
 
 @router.get("/")
 async def list_projects(
-    request: Request,
+    user_id: UUID = Depends(request_user_id),
     search: str | None = Query(default=None),
     group_id: str | None = Query(default=None),
     region: str | None = Query(default=None),
@@ -266,6 +313,7 @@ async def list_projects(
     is_active: bool | None = Query(default=None),
     only_delegated: str | None = Query(default=None),
     delegated_by: str | None = Query(default=None),
+    integration_type: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     project_repo: ProjectRepository = Depends(_project_repo),
@@ -275,50 +323,37 @@ async def list_projects(
 
     base_stmt = select(Project)
 
-    # Build filter conditions for counting (same as main query)
-    count_conditions = []
-    filter_conditions = []
+    # Only projects the user owns or was delegated
+    filter_conditions = [Project.id.in_(accessible_project_ids(user_id))]
 
     if search:
-        pattern = f"%{search}%"
-        count_conditions.append(Project.name.ilike(pattern))
-        filter_conditions.append(Project.name.ilike(pattern))
+        filter_conditions.append(Project.name.ilike(f"%{search}%"))
     if group_id:
-        gid = UUID(group_id)
-        count_conditions.append(Project.group_id == gid)
-        filter_conditions.append(Project.group_id == gid)
+        filter_conditions.append(Project.group_id == UUID(group_id))
     if region:
-        count_conditions.append(Project.region == region)
         filter_conditions.append(Project.region == region)
     if strategy_type:
-        count_conditions.append(Project.strategy_type == strategy_type)
         filter_conditions.append(Project.strategy_type == strategy_type)
     if is_active is not None:
-        count_conditions.append(Project.is_active == is_active)
         filter_conditions.append(Project.is_active == is_active)
+    if integration_type:
+        kind = Project.integrations["integration_type"].as_string()
+        if integration_type == "default":  # no integration configured
+            filter_conditions.append(or_(kind.is_(None), kind == "default"))
+        else:
+            filter_conditions.append(kind == integration_type)
 
-    # --- Access filters (delegation) — only applied if user is authenticated ---
-    req_user_id = await _user_id_from_request(request)
-
-    if only_delegated and req_user_id:
+    if only_delegated:
         # Show only projects delegated TO the current user
-        delegated_to_subq = (
-            select(ProjectDelegate.project_id)
-            .where(ProjectDelegate.delegate_user_id == req_user_id)
-            .scalar_subquery()
-        )
-        count_conditions.append(Project.id == delegated_to_subq)
-        filter_conditions.append(Project.id == delegated_to_subq)
-
-    if delegated_by and req_user_id:
+        filter_conditions.append(Project.id.in_(
+            select(ProjectDelegate.project_id).where(ProjectDelegate.delegate_user_id == user_id)
+        ))
+    if delegated_by:
         # Show only projects where current user is the inviter (delegated BY current user)
-        delegated_by_subq = (
-            select(ProjectDelegate.project_id)
-            .where(ProjectDelegate.inviter_user_id == req_user_id)
-            .scalar_subquery()
-        )
-        count_conditions.append(Project.id == delegated_by_subq)
-        filter_conditions.append(Project.id == delegated_by_subq)
+        filter_conditions.append(Project.id.in_(
+            select(ProjectDelegate.project_id).where(ProjectDelegate.inviter_user_id == user_id)
+        ))
+
     # Count total matching projects
     count_stmt = select(func.count()).select_from(Project).where(*filter_conditions)
     total = (await session.execute(count_stmt)).scalar() or 0
@@ -347,9 +382,17 @@ async def list_projects(
     if proj_uuids:
         del_result = await session.execute(
             select(ProjectDelegate.project_id)
-            .where(ProjectDelegate.project_id.in_(proj_uuids))  # type: ignore[arg-type]
+            .where(
+                ProjectDelegate.project_id.in_(proj_uuids),  # type: ignore[arg-type]
+                ProjectDelegate.delegate_user_id == user_id,
+            )
         )
         delegated_ids = {str(r[0]) for r in del_result.all()}
+
+    # Every region among the user's projects, for the region filter (not just this page's)
+    regions = sorted(r for r in (await session.execute(
+        select(Project.region).distinct().where(Project.id.in_(accessible_project_ids(user_id)))
+    )).scalars() if r)
 
     return {
         "items": [
@@ -373,7 +416,75 @@ async def list_projects(
     "total": total,
     "page": page,
     "page_size": page_size,
+    "regions": regions,
 }
+
+
+@router.get("/global-search")
+async def global_search(
+    q: str = Query(..., min_length=1),
+    user_id: UUID = Depends(request_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Search across groups, projects and queries. Returns grouped results with navigation hrefs."""
+    from services.project_service.domain.models import ProjectGroup
+
+    pattern = f"%{q}%"
+
+    # Search groups
+    group_result = await session.execute(
+        select(ProjectGroup).where(ProjectGroup.user_id == user_id, ProjectGroup.name.ilike(pattern))
+    )
+    groups = group_result.scalars().all()
+
+    # Search projects (matching name or domain)
+    proj_result = await session.execute(
+        select(Project).where(
+            Project.id.in_(accessible_project_ids(user_id)),
+            or_(
+                Project.name.ilike(pattern),
+                Project.domain.ilike(pattern),
+            )
+        ).limit(50)
+    )
+    projects = proj_result.scalars().all()
+
+    # Search queries (matching text) — limit to avoid huge result sets
+    query_result = await session.execute(
+        select(_QueryModel, Project.name)
+        .join(Project, _QueryModel.project_id == Project.id)
+        .where(
+            _QueryModel.project_id.in_(accessible_project_ids(user_id)),
+            _QueryModel.text.ilike(pattern),
+        ).limit(30)
+    )
+    queries_raw = query_result.all()
+
+    return {
+        "groups": [
+            {"id": str(g.id), "name": g.name, "href": f"/?group_id={str(g.id)}"}
+            for g in groups
+        ],
+        "projects": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "domain": p.domain,
+                "href": f"/projects/{str(p.id)}",
+            }
+            for p in projects
+        ],
+        "queries": [
+            {
+                "id": str(qi.id),
+                "text": qi.text,
+                "project_id": str(qi.project_id),
+                "project_name": project_name,
+                "href": f"/projects/{qi.project_id}?{urlencode({'tab': 'queries', 'query': qi.text})}",
+            }
+            for qi, project_name in queries_raw
+        ],
+    }
 
 
 @router.get("/{project_id}")
@@ -408,44 +519,45 @@ async def get_project(
 async def update_project(
     project_id: str,
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     project_repo: ProjectRepository = Depends(_project_repo),
     session: AsyncSession = Depends(get_session),
 ):
-    """Update an existing project."""
+    """Update an existing project (only the fields in _EDITABLE_PROJECT_FIELDS)."""
     project = await project_repo.get_by_id(UUID(project_id))
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Capture old values for audit log
-    old_values = {
-        "name": project.name,
-        "domain": project.domain,
-        "region": project.region,
-        "strategy_type": project.strategy_type,
-    }
+    protected = sorted(set(body) - _EDITABLE_PROJECT_FIELDS - {"id"})
+    if protected:
+        raise HTTPException(status_code=422, detail=f"Field(s) can't be changed here: {', '.join(protected)}")
+    if "group_id" in body:
+        body = {**body, "group_id": await _own_group_id(session, body["group_id"], project.user_id)}
 
-    for key, value in body.items():
-        if hasattr(project, key) and key not in ("id", "created_at", "updated_at"):
-            setattr(project, key, value)
+    def _jsonable(value):
+        return str(value) if isinstance(value, UUID) else value
 
-    # Record audit log entry
-    try:
-        new_values = {k: v for k, v in body.items() if k in old_values}
+    # Audit only the fields that actually change, before -> after
+    changed = {k: v for k, v in body.items() if k in _EDITABLE_PROJECT_FIELDS and getattr(project, k) != v}
+    old_values = {k: _jsonable(getattr(project, k)) for k in changed}
+    for key, value in changed.items():
+        setattr(project, key, value)
+
+    if changed:
         await record_audit_entry(
             session,
-            project_id=UUID(project_id),
-            user_id=project.user_id,
+            project_id=project.id,
+            user_id=user_id,  # who made the change (owner or an edit delegate)
             action="update_project",
             old_values=old_values,
-            new_values=new_values,
+            new_values={k: _jsonable(v) for k, v in changed.items()},
         )
-    except Exception:
-        pass
 
+    await session.commit()
     return {"id": str(project.id), "updated": True}
 
 
-@router.delete("/{project_id}")
+@router.delete("/{project_id}", dependencies=[Depends(require_project_owner)])
 async def delete_project(
     project_id: str,
     project_repo: ProjectRepository = Depends(_project_repo),
@@ -469,6 +581,7 @@ async def delete_project(
         pass
 
     await project_repo.delete(project)
+    await session.commit()
     return {"deleted": True}
 
 
@@ -479,25 +592,16 @@ async def add_query(
     project_id: str,
     body: dict,
     query_repo: QueryRepository = Depends(_query_repo),
+    session: AsyncSession = Depends(get_session),
 ):
     """Add a query (term) to a project."""
+    require_fields(body, "text")
     text = body["text"]
+    ensure_safe_url(body.get("url"), "url")
+    ensure_safe_url(body.get("click_url"), "click_url")
 
     # Generate search click URL if not provided
-    if not body.get("click_url"):
-        import urllib.parse as _urllib
-
-        engine = body.get("search_engine", "google")
-        params = {"q": text}
-        encoded = _urllib.urlencode(params)
-        engines_map: dict[str, str] = {
-            "google": f"https://www.google.com/search?{encoded}",
-            "yandex": f"https://yandex.ru/search/?text={_urllib.quote(text)}",
-            "bing": f"https://www.bing.com/search?q={encoded}",
-        }
-        click_url = engines_map.get(engine, engines_map["google"])
-    else:
-        click_url = body["click_url"]
+    click_url = body.get("click_url") or search_click_url(text, body.get("search_engine", "google"))
 
     query = _QueryModel(
         project_id=UUID(project_id),
@@ -507,6 +611,7 @@ async def add_query(
         geo=body.get("geo", {}),
     )
     query = await query_repo.create(query)
+    await session.commit()
     return {
         "id": str(query.id),
         "text": query.text,
@@ -545,6 +650,7 @@ async def list_queries(
             "click_url": q.click_url,
             "geo": q.geo,
             "daily_clicks": q.daily_clicks,
+            "frequency": q.frequency,
             "position": q.position,
             "completed": completed_map.get(str(q.id), 0),
         }
@@ -560,10 +666,12 @@ async def update_query(
     session: AsyncSession = Depends(get_session),
 ):
     """Update a single query (inline editing: geo, daily_clicks, click_url, url)."""
-    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id)))
+    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id), _QueryModel.project_id == UUID(project_id)))
     query = result.scalar_one_or_none()
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
+    ensure_safe_url(body.get("url"), "url")
+    ensure_safe_url(body.get("click_url"), "click_url")
     # Only allowed fields
     allowed_fields = ("geo", "daily_clicks", "click_url", "url", "position", "frequency", "query_modifications")
     for key in allowed_fields:
@@ -589,7 +697,7 @@ async def delete_query(
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a query from a project."""
-    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id)))
+    result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(query_id), _QueryModel.project_id == UUID(project_id)))
     query = result.scalar_one_or_none()
     if not query or query.project_id != UUID(project_id):
         raise HTTPException(status_code=404, detail="Query not found")
@@ -619,7 +727,7 @@ async def boost_queries(
 
     for qid in query_ids:
         # Update query fields
-        result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(qid)))
+        result = await session.execute(select(_QueryModel).where(_QueryModel.id == UUID(qid), _QueryModel.project_id == UUID(project_id)))
         query = result.scalar_one_or_none()
         if not query or query.project_id != UUID(project_id):
             continue
@@ -832,6 +940,7 @@ async def create_marker(
     """Create a new marker."""
     from uuid import uuid4
 
+    ensure_safe_url(body.get("url"), "url")
     marker = Marker(
         id=uuid4(),
         project_id=UUID(project_id),
@@ -861,11 +970,12 @@ async def update_marker(
     session: AsyncSession = Depends(get_session),
 ):
     """Update a marker."""
-    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id)))
+    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id), Marker.project_id == UUID(project_id)))
     marker = result.scalar_one_or_none()
     if not marker:
         raise HTTPException(status_code=404, detail="Marker not found")
 
+    ensure_safe_url(body.get("url"), "url")
     for key in ("name", "url", "css_selector", "description", "is_active"):
         if key in body:
             setattr(marker, key, body[key])
@@ -889,7 +999,7 @@ async def delete_marker(
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a marker."""
-    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id)))
+    result = await session.execute(select(Marker).where(Marker.id == UUID(marker_id), Marker.project_id == UUID(project_id)))
     marker = result.scalar_one_or_none()
     if not marker:
         raise HTTPException(status_code=404, detail="Marker not found")
@@ -958,7 +1068,7 @@ async def update_webmarker(
     session: AsyncSession = Depends(get_session),
 ):
     """Update a webmarker."""
-    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id), Webmarker.project_id == UUID(project_id)))
     wm = result.scalar_one_or_none()
     if not wm:
         raise HTTPException(status_code=404, detail="Webmarker not found")
@@ -985,7 +1095,7 @@ async def verify_webmarker(
     session: AsyncSession = Depends(get_session),
 ):
     """Mark a webmarker as verified."""
-    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id), Webmarker.project_id == UUID(project_id)))
     wm = result.scalar_one_or_none()
     if not wm:
         raise HTTPException(status_code=404, detail="Webmarker not found")
@@ -1008,7 +1118,7 @@ async def delete_webmarker(
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a webmarker."""
-    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id)))
+    result = await session.execute(select(Webmarker).where(Webmarker.id == UUID(webmarker_id), Webmarker.project_id == UUID(project_id)))
     wm = result.scalar_one_or_none()
     if not wm:
         raise HTTPException(status_code=404, detail="Webmarker not found")
@@ -1025,33 +1135,58 @@ async def list_delegates(
     project_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """List delegates for a project."""
+    """List delegates for a project (with their e-mail and name)."""
+    from services.auth_service.domain.models import User as _User
 
     result = await session.execute(
-        select(ProjectDelegate)
+        select(ProjectDelegate, _User.email, _User.display_name)
+        .join(_User, _User.id == ProjectDelegate.delegate_user_id)
         .where(ProjectDelegate.project_id == UUID(project_id))
+        .order_by(ProjectDelegate.created_at)
     )
-    delegates = result.scalars().all()
     return [
         {
             "id": str(d.id),
             "delegate_user_id": str(d.delegate_user_id),
+            "email": email,
+            "display_name": display_name,
             "inviter_user_id": str(d.inviter_user_id),
             "role": d.role,
         }
-        for d in delegates
+        for d, email, display_name in result.all()
     ]
 
 
-@router.post("/{project_id}/delegates")
+async def _resolve_delegate(session: AsyncSession, body: dict, owner_id: UUID) -> tuple[UUID, str]:
+    """The user to delegate to (by "email" or "delegate_user_id") and the role; 404/422 on bad input."""
+    from services.auth_service.domain.models import User as _User
+
+    if body.get("email"):
+        email = str(body["email"]).strip().lower()
+        delegate = (await session.execute(select(_User).where(func.lower(_User.email) == email))).scalar_one_or_none()
+    elif body.get("delegate_user_id"):
+        delegate = await session.get(_User, parse_uuid(body["delegate_user_id"], "delegate_user_id"))
+    else:
+        raise HTTPException(status_code=422, detail="Required field(s): email")
+    if delegate is None:
+        raise HTTPException(status_code=404, detail="Пользователь с таким e-mail не найден")
+    if delegate.id == owner_id:
+        raise HTTPException(status_code=422, detail="Нельзя делегировать проект самому себе")
+    role = body.get("role", "view")
+    if role not in ("view", "edit"):
+        raise HTTPException(status_code=422, detail="role must be 'view' or 'edit'")
+    return delegate.id, role
+
+
+@router.post("/{project_id}/delegates", dependencies=[Depends(require_project_owner)])
 async def add_delegate(
     project_id: str,
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Add a delegate to a project."""
-    delegate_uid = UUID(body["delegate_user_id"])
-    role = body.get("role", "view")
+    """Add a delegate to a project, by e-mail (what the UI sends) or by user id."""
+    delegate_uid, role = await _resolve_delegate(session, body, user_id)
 
     existing = await session.execute(
         select(ProjectDelegate)
@@ -1063,14 +1198,11 @@ async def add_delegate(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="User already a delegate")
 
-    inviter_raw = body.get("inviter_user_id")
-    inviter_uuid = UUID(inviter_raw) if isinstance(inviter_raw, str) else (inviter_raw or uuid4())
-
     invite = ProjectDelegate(
         id=uuid4(),
         project_id=UUID(project_id),
         delegate_user_id=delegate_uid,
-        inviter_user_id=inviter_uuid,
+        inviter_user_id=user_id,
         role=role,
     )
     session.add(invite)
@@ -1083,7 +1215,7 @@ async def add_delegate(
     }
 
 
-@router.delete("/{project_id}/delegates/{delegate_uid}")
+@router.delete("/{project_id}/delegates/{delegate_uid}", dependencies=[Depends(require_project_owner)])
 async def remove_delegate(
     project_id: str,
     delegate_uid: str,
@@ -1108,64 +1240,95 @@ async def remove_delegate(
 
 # --- Query Import / Export ---------------------------------------------------- #
 
+
+def _csv_download(content: str, filename: str):
+    """CSV attachment that Excel opens correctly; ``filename`` may contain Cyrillic (RFC 5987)."""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response as FastAPIResponse
+
+    ascii_name = filename.encode("ascii", "ignore").decode() or "report.csv"
+    disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    return FastAPIResponse(
+        content="\ufeff" + content, headers={"Content-Disposition": disposition}, media_type="text/csv; charset=utf-8"
+    )
+
+
+def _decode_csv(raw: bytes) -> str:
+    """CSV bytes as text: UTF-8 (with or without Excel's BOM), else Windows-1251 from older Excel."""
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1251")
+
+
+def _csv_int(value: str | None, default: int) -> int:
+    try:
+        return int(value) if value and value.strip() else default
+    except ValueError:
+        return default
+
+
 @router.post("/{project_id}/queries/import")
 async def import_queries(
     project_id: str,
     request: Request,
-    query_repo: QueryRepository = Depends(_query_repo),
+    search_engine: str = Query(default="google"),
     session: AsyncSession = Depends(get_session),
 ):
-    """Bulk import queries from raw CSV body."""
-    csv_raw = (await request.body()).decode("utf-8")
+    """Bulk import queries from a raw CSV body (the export format, or any file with a text column).
+
+    Columns: text (or Текст; else the first column), url, click_url, daily_clicks, frequency, geo (JSON).
+    Comma, semicolon and tab separators are accepted; queries the project already has are skipped.
+    """
+    import csv as _csv
+    import io as _io
+
+    csv_raw = _decode_csv(await request.body())
     if not csv_raw.strip():
         raise HTTPException(status_code=400, detail="CSV content is empty")
 
-    import csv as _csv
-    import io as _io
-    import urllib.parse as _urllib
-
-    reader = _csv.DictReader(_io.StringIO(csv_raw))
+    try:  # only the separator is sniffed (from the header); quoting stays standard
+        delimiter = _csv.Sniffer().sniff(csv_raw.splitlines()[0], delimiters=",;\t").delimiter
+    except _csv.Error:  # a single column has no separator to detect
+        delimiter = ","
+    reader = _csv.DictReader(_io.StringIO(csv_raw), delimiter=delimiter)
+    project_uuid = UUID(project_id)
+    existing = set((await session.execute(
+        select(_QueryModel.text).where(_QueryModel.project_id == project_uuid)
+    )).scalars().all())
     created = 0
     skipped = 0
-    project_uuid = UUID(project_id)
 
     for row in reader:
-        text = (row.get("text") or row.get("Текст") or "").strip()
-        if not text:
-            # Try first column as text
-            first_val = next(iter(row.values()), "").strip() if row else ""
-            if not first_val:
-                skipped += 1
-                continue
-            text = first_val
-
-        url = (row.get("url") or "").strip() or None
-        click_url = ""
-        if url and url.startswith(("http://", "https://")):
-            # Generate yandex search click_url as default
-            params = _urllib.urlencode({"q": text})
-            click_url = f"https://yandex.ru/search/?text={_urllib.quote(text)}"
-
-        query = _QueryModel(
+        text = (row.get("text") or row.get("Текст") or next(iter(row.values()), "") or "").strip()
+        if not text or text in existing:
+            skipped += 1
+            continue
+        try:
+            geo = _json.loads(row.get("geo") or "{}")
+        except ValueError:
+            geo = {}
+        row_url = (row.get("url") or "").strip() or None
+        row_click_url = (row.get("click_url") or "").strip()
+        # Drop any non-http(s) URL from the imported file rather than storing it.
+        if _is_unsafe_url(row_url):
+            row_url = None
+        if _is_unsafe_url(row_click_url):
+            row_click_url = ""
+        session.add(_QueryModel(
             project_id=project_uuid,
             text=text,
-            url=url if url else None,
-            click_url=click_url or None,
-            geo={},
-            daily_clicks=0,
-            position=None,
-            frequency=1,
-        )
-        session.add(query)
+            url=row_url,
+            click_url=row_click_url or search_click_url(text, search_engine),
+            geo=geo if isinstance(geo, dict) else {},
+            daily_clicks=_csv_int(row.get("daily_clicks"), 0),
+            frequency=_csv_int(row.get("frequency"), 1),
+        ))
+        existing.add(text)
         created += 1
 
-    try:
-        await session.flush()
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(status_code=422, detail=f"Import error: {str(e)}")
-
+    await session.commit()
     return {"created": created, "skipped": skipped}
 
 
@@ -1183,18 +1346,15 @@ async def export_queries(
 
     output = _io.StringIO()
     writer = _csv.writer(output)
-    writer.writerow(["text", "url", "daily_clicks", "frequency", "geo"])
+    writer.writerow(["text", "url", "click_url", "daily_clicks", "frequency", "geo"])
     for q in queries:
-        geo_str = _json.dumps(q.geo) if isinstance(q.geo, dict) else ""
-        writer.writerow([q.text, q.url or "", q.daily_clicks, q.frequency, geo_str])
+        geo_str = _json.dumps(q.geo, ensure_ascii=False) if isinstance(q.geo, dict) else ""
+        writer.writerow([
+            csv_safe(q.text), csv_safe(q.url or ""), csv_safe(q.click_url or ""),
+            q.daily_clicks, q.frequency, csv_safe(geo_str),
+        ])
 
-    from fastapi.responses import Response as FastAPIResponse
-
-    return FastAPIResponse(
-        content=output.getvalue(),
-        headers={"Content-Disposition": f"attachment; filename={project_id}_queries.csv"},
-        media_type="text/csv",
-    )
+    return _csv_download(output.getvalue(), f"{project_id}_queries.csv")
 
 
 # --- Dashboard / listing enhancements -------------------------------------- #
@@ -1204,16 +1364,15 @@ async def get_overdue_count(
     project_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Return count of overdue tasks (pending with pending_check_at < now)."""
+    """Return count of overdue tasks (pending for longer than PENDING_OVERDUE_AFTER)."""
+    from services.queue_service.domain.models import PENDING_OVERDUE_AFTER
+
     now = datetime.now(timezone.utc)
     result = await session.execute(
-        select(func.count(QueueTask.id))
-        .where(
-            and_(
-                QueueTask.project_id == UUID(project_id),
-                QueueTask.status == "pending",
-                QueueTask.pending_check_at < now,
-            )
+        select(func.count(QueueTask.id)).where(
+            QueueTask.project_id == UUID(project_id),
+            QueueTask.status == "pending",
+            QueueTask.created_at < now - PENDING_OVERDUE_AFTER,
         )
     )
     overdue = result.scalar() or 0
@@ -1251,6 +1410,7 @@ async def get_source_breakdown(
 async def copy_project(
     project_id: str,
     body: dict,
+    user_id: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Copy a project with all its queries and strategy tasks."""
@@ -1264,13 +1424,13 @@ async def copy_project(
     new_name = body.get("name", f"{project.name} (copy)")  # type: ignore[attr-defined]
     new_project = Project(
         id=uuid4(),
-        user_id=project.user_id,
+        user_id=user_id,
         name=new_name,
         domain=project.domain,
         strategy_type=project.strategy_type,
         daily_limit=project.daily_limit,
         region=project.region,
-        group_id=project.group_id,
+        group_id=project.group_id if project.user_id == user_id else None,  # groups are per-user
         geo_settings=project.geo_settings or {},
         integrations=project.integrations or {},
         scheduling_window=project.scheduling_window,
@@ -1398,35 +1558,29 @@ async def activate_project(
 @router.post("/{project_id}/clear-queue")
 async def clear_queue(
     project_id: str,
-    body: dict = {},
+    body: dict | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Clear queue tasks by status filter."""
-    from sqlalchemy import update as sa_update
+    """Delete the project's queue tasks with the given statuses (default: pending + in_progress)."""
+    from sqlalchemy import delete as sa_delete
 
-    target_statuses = body.get("statuses", ["pending", "in_progress"])  # type: ignore[arg-type]
+    target_statuses = (body or {}).get("statuses") or ["pending", "in_progress"]
+    unknown = set(target_statuses) - {"pending", "in_progress", "completed", "not_found", "stuck"}
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown status(es): {', '.join(sorted(unknown))}")
+
     await session.execute(
-        sa_update(QueueTask)
-        .where(
-            and_(
-                QueueTask.project_id == UUID(project_id),  # type: ignore[arg-type]
-                QueueTask.status.in_(target_statuses),  # type: ignore[attr-defined]
-            )
+        sa_delete(QueueTask).where(
+            QueueTask.project_id == UUID(project_id),  # type: ignore[arg-type]
+            QueueTask.status.in_(target_statuses),  # type: ignore[attr-defined]
         )
-        .values(status="pending")
     )
     await session.commit()
 
-    # Count remaining pending tasks
-    count_result = await session.execute(
-        select(func.count(QueueTask.id)).where(
-            and_(
-                QueueTask.project_id == UUID(project_id),  # type: ignore[arg-type]
-                QueueTask.status.in_(target_statuses),  # type: ignore[attr-defined]
-            )
-        )
-    )
-    remaining = count_result.scalar() or 0
+    # Tasks left in the project's queue after clearing
+    remaining = (await session.execute(
+        select(func.count(QueueTask.id)).where(QueueTask.project_id == UUID(project_id))
+    )).scalar() or 0
 
     # Record audit log entry
     try:
@@ -1659,82 +1813,16 @@ async def record_audit_entry(
 # --- Global Search ------------------------------------------------------------ #
 
 
-@router.get("/global-search")
-async def global_search(
-    q: str = Query(..., min_length=1),
-    session: AsyncSession = Depends(get_session),
-):
-    """Search across groups, projects and queries. Returns grouped results with navigation hrefs."""
-    from services.project_service.domain.models import ProjectGroup
-
-    pattern = f"%{q}%"
-
-    # Search groups
-    group_result = await session.execute(
-        select(ProjectGroup).where(ProjectGroup.name.ilike(pattern))
-    )
-    groups = group_result.scalars().all()
-
-    # Search projects (matching name or domain)
-    proj_result = await session.execute(
-        select(Project).where(
-            or_(
-                Project.name.ilike(pattern),
-                Project.domain.ilike(pattern),
-            )
-        ).limit(50)
-    )
-    projects = proj_result.scalars().all()
-
-    # Search queries (matching text) — limit to avoid huge result sets
-    query_result = await session.execute(
-        select(_QueryModel).where(_QueryModel.text.ilike(pattern)).limit(30)
-    )
-    queries_raw = query_result.scalars().all()
-
-    return {
-        "groups": [
-            {"id": str(g.id), "name": g.name, "href": f"/?group_id={str(g.id)}"}
-            for g in groups
-        ],
-        "projects": [
-            {
-                "id": str(p.id),
-                "name": p.name,
-                "domain": p.domain,
-                "href": f"/projects/{str(p.id)}",
-            }
-            for p in projects
-        ],
-        "queries": [
-            {
-                "id": str(qi.id),
-                "text": qi.text,
-                "project_id": str(qi.project_id),
-                "href": f"/projects/{str(qi.project_id)}?tab=queries&query={qi.text}",
-            }
-            for qi in queries_raw
-        ],
-    }
-
-
 # --- Bulk project operations -------------------------------------------------- #
 
 
 @router.post("/bulk-toggle")
 async def bulk_toggle_projects(
     body: dict,
+    uid: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Toggle is_active for a list of projects by IDs."""
-    from services.auth_service.domain.models import User
-
-    user_id_raw = body.get("user_id")
-    try:
-        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
     project_ids: list[str] = body.get("project_ids", [])
     if not project_ids:
         raise HTTPException(status_code=400, detail="project_ids is required")
@@ -1762,17 +1850,10 @@ async def bulk_toggle_projects(
 @router.post("/bulk-edit")
 async def bulk_edit_projects(
     body: dict,
+    uid: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Bulk-edit projects by ID set (daily_limit, region, geo_settings, scheduling_window, query_modifications)."""
-    from services.auth_service.domain.models import User
-
-    user_id_raw = body.get("user_id")
-    try:
-        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
     project_ids: list[str] = body.get("project_ids", [])
     if not project_ids:
         raise HTTPException(status_code=400, detail="project_ids is required")
@@ -1821,17 +1902,10 @@ async def bulk_edit_projects(
 @router.post("/bulk-delete")
 async def bulk_delete_projects(
     body: dict,
+    uid: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Delete projects by ID set (cascades to queries, tasks)."""
-    from services.auth_service.domain.models import User
-
-    user_id_raw = body.get("user_id")
-    try:
-        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
     project_ids: list[str] = body.get("project_ids", [])
     if not project_ids:
         raise HTTPException(status_code=400, detail="project_ids is required")
@@ -1857,27 +1931,12 @@ async def bulk_delete_projects(
 @router.post("/bulk-delegate")
 async def bulk_delegate_projects(
     body: dict,
+    uid: UUID = Depends(request_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     """Add delegate access to multiple projects for a single user."""
-    from services.auth_service.domain.models import User
-
-    user_id_raw = body.get("user_id")
-    try:
-        uid = UUID(str(user_id_raw)) if user_id_raw else uuid4()
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
     project_ids: list[str] = body.get("project_ids", [])
-    delegate_uid_raw = body.get("delegate_user_id")
-    if not delegate_uid_raw:
-        raise HTTPException(status_code=400, detail="delegate_user_id is required")
-    try:
-        delegate_uid = UUID(delegate_uid_raw)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid delegate_user_id")
-
-    role = body.get("role", "view")
+    delegate_uid, role = await _resolve_delegate(session, body, uid)
     added = 0
 
     for pid in project_ids:
@@ -1923,28 +1982,10 @@ async def bulk_update_queries(
     body: dict,
     session: AsyncSession = Depends(get_session),
 ):
-    """Bulk-update queries by ID set (daily_clicks, geo, click_url)."""
-    from services.auth_service.domain.models import User
-
-    user = UUID(body.get("user_id", "00000000-0000-0000-0000-000000000000"))
-    try:
-        uid = UUID(str(user))
-    except (ValueError, TypeError):
-        # Accept user_id as string if present
-        uid = UUID(body.get("user_id", "00000000-0000-0000-0000-000000000000"))
-
-    try:
-        proj_uuid = UUID(project_id)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid project_id")
-
-    # Verify ownership
+    """Bulk-update queries of this project by ID set (daily_clicks, geo, click_url, text)."""
     from sqlalchemy import select as sa_select
-    q = await session.execute(
-        sa_select(Project).where(Project.id == proj_uuid, Project.user_id == uid)
-    )
-    if not q.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Project not found")
+
+    proj_uuid = UUID(project_id)  # access to the project is checked by the router dependency
 
     query_ids: list[str] = body.get("query_ids", [])
     if not query_ids:
@@ -2053,23 +2094,14 @@ async def export_analytics_report(
     for r in rows:
         completed_rate = round((r.completed / (r.total_tasks or 1) * 100), 2) if (r.total_tasks or 0) > 0 else 0
         writer.writerow([
-            r.text,
+            csv_safe(r.text),
             r.total_tasks or 0,
             r.completed or 0,
             completed_rate,
             round(float(r.avg_position), 2) if r.avg_position else None,
         ])
 
-    from fastapi.responses import Response as FastAPIResponse
-
-    safe_name = project.name.replace(" ", "_")[:50]
-    return FastAPIResponse(
-        content=output.getvalue(),
-        headers={
-            "Content-Disposition": f"attachment; filename={safe_name}_analytics.csv",
-        },
-        media_type="text/csv",
-    )
+    return _csv_download(output.getvalue(), f"{project.name.replace(' ', '_')[:50]}_analytics.csv")
 
 
 @router.get("/{project_id}/reports/summary.csv")
@@ -2118,7 +2150,9 @@ async def export_summary_report(
     agg = agg_result.one()
 
     top_pos_result = await session.execute(
-        select(_QueryModel.text, QueueTask.position).where(
+        select(_QueryModel.text, QueueTask.position)
+        .join(_QueryModel, _QueryModel.id == QueueTask.query_id)
+        .where(
             and_(  # type: ignore[arg-type]
                 QueueTask.project_id == UUID(project_id),
                 QueueTask.status == "completed",
@@ -2132,8 +2166,8 @@ async def export_summary_report(
     output = _io.StringIO()
     writer = _csv.writer(output)
     writer.writerow(["report_type", "TopInjector Summary Report"])
-    writer.writerow(["project_name", project.name])
-    writer.writerow(["domain", project.domain])
+    writer.writerow(["project_name", csv_safe(project.name)])
+    writer.writerow(["domain", csv_safe(project.domain)])
     if from_date:
         writer.writerow(["period_from", from_date])
     if to_date:
@@ -2155,108 +2189,45 @@ async def export_summary_report(
         if txt and pos_val is not None and (txt not in pos_map or pos_val < pos_map[txt]):
             pos_map[txt] = pos_val
     for txt in sorted(pos_map):
-        writer.writerow([txt, pos_map[txt]])
+        writer.writerow([csv_safe(txt), pos_map[txt]])
 
-    from fastapi.responses import Response as FastAPIResponse
-
-    safe_name = project.name.replace(" ", "_")[:50]
-    return FastAPIResponse(
-        content=output.getvalue(),
-        headers={
-            "Content-Disposition": f"attachment; filename={safe_name}_summary.csv",
-        },
-        media_type="text/csv",
-    )
+    return _csv_download(output.getvalue(), f"{project.name.replace(' ', '_')[:50]}_summary.csv")
 
 
 # --- Balance ---------------------------------------------------------------- #
 
-@router.get("/{id}/balance")
+@router.get("/{project_id}/balance")
 async def get_project_balance(
-    id: UUID,
     project = Depends(_get_project_or_404),  # type: ignore[name-defined]
 ):
     """Get current project balance."""
-    return {
-        "project_id": str(project.id),
-        "balance": project.balance_credits,
-        "balance_rub": project.balance_credits / 100,
-    }
+    return balance_payload(project)
 
 
-@router.post("/{id}/balance/add")
+@router.post("/{project_id}/balance/add", dependencies=[Depends(require_project_owner)])
 async def add_project_balance(
-    id: UUID,
     body: dict,
     project = Depends(_get_project_or_404),  # type: ignore[name-defined]
     session: AsyncSession = Depends(get_session),
 ):
-    """Add credits to a project balance."""
-    amount_kopeks = int(body.get("amount", 0) * 100)
-    description = body.get("description", "")
-
-    if amount_kopeks <= 0:
-        raise HTTPException(status_code=400, detail="Amount must be positive")
-
-    # Update project balance
-    project.balance_credits += amount_kopeks
-
-    # Create transaction record
-    txn = BalanceTransaction(
-        id=uuid4(),
-        project_id=id,
-        amount=amount_kopeks,
-        description=description,
-        type="add",
-    )
-    session.add(txn)
-    await session.commit()
-    await session.refresh(project)
-
-    return {
-        "project_id": str(project.id),
-        "balance": project.balance_credits,
-        "balance_rub": project.balance_credits / 100,
-        "added": amount_kopeks / 100,
-        "transaction_id": str(txn.id),
-    }
+    """Add credits (rubles) to a project balance."""
+    txn = await add_balance(session, project, body.get("amount", 0), body.get("description", ""))
+    return {**balance_payload(project), "added": txn.amount / 100, "transaction_id": str(txn.id)}
 
 
-@router.post("/{id}/balance/set")
+@router.post("/{project_id}/balance/set", dependencies=[Depends(require_project_owner)])
 async def set_project_balance(
-    id: UUID,
     body: dict,
     project = Depends(_get_project_or_404),  # type: ignore[name-defined]
     session: AsyncSession = Depends(get_session),
 ):
-    """Set project balance to a specific value."""
-    new_balance_kopeks = int(body.get("balance", 0) * 100)
-    diff = new_balance_kopeks - project.balance_credits
-    description = body.get("description", "Баланс установлен вручную")
-
-    if diff != 0:
-        txn = BalanceTransaction(
-            id=uuid4(),
-            project_id=id,
-            amount=diff,
-            description=f"{description} (установка баланса)",
-            type="set",
-        )
-        session.add(txn)
-
-    project.balance_credits = new_balance_kopeks
-    await session.commit()
-
-    return {
-        "project_id": str(project.id),
-        "balance": project.balance_credits,
-        "balance_rub": project.balance_credits / 100,
-    }
+    """Set project balance (rubles) to a specific value."""
+    await set_balance(session, project, body.get("balance", 0), body.get("description", "Баланс установлен вручную"))
+    return balance_payload(project)
 
 
-@router.get("/{id}/balance/history")
+@router.get("/{project_id}/balance/history")
 async def get_balance_history(
-    id: UUID,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     project = Depends(_get_project_or_404),  # type: ignore[name-defined]
@@ -2267,14 +2238,14 @@ async def get_balance_history(
 
     # Count total
     count_query = select(func.count()).select_from(BalanceTransaction).where(
-        BalanceTransaction.project_id == id
+        BalanceTransaction.project_id == project.id
     )
     total = await session.scalar(count_query)
 
     # Get transactions
     txn_query = (
         select(BalanceTransaction)
-        .where(BalanceTransaction.project_id == id)
+        .where(BalanceTransaction.project_id == project.id)
         .order_by(BalanceTransaction.created_at.desc())
         .offset(offset)
         .limit(page_size)
@@ -2309,8 +2280,6 @@ async def search_geo_codes(
     session: AsyncSession = Depends(get_session),
 ):
     """Search geo code presets for the multigeo builder autocomplete."""
-    from sqlalchemy import like
-
     stmt = select(GeoCodePreset).limit(limit)
 
     if q.strip():
@@ -2347,10 +2316,17 @@ async def search_geo_codes(
 # --- Admin Panel stats ------------------------------------------------------- #
 
 @router.get("/admin/stats")
-async def admin_stats(session: AsyncSession = Depends(get_session)):
-    """Get system-wide admin statistics (total users, projects, balance, queue)."""
+async def admin_stats(
+    user_id: UUID = Depends(request_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get system-wide admin statistics (total users, projects, balance, queue). Admins only (ADMIN_EMAILS)."""
     from services.auth_service.domain.models import User as _UserModel
     from services.queue_service.domain.models import QueueTask as _QueueTaskModel
+
+    caller = await session.get(_UserModel, user_id)
+    if caller is None or caller.email.lower() not in settings.admin_email_set:
+        raise HTTPException(status_code=403, detail="Admins only")
 
     total_users = (await session.execute(select(func.count(_UserModel.id)))).scalar() or 0
     total_projects = (await session.execute(select(func.count(Project.id)))).scalar() or 0

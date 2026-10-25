@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -39,11 +39,21 @@ def decode_access_token(token: str) -> UUID | None:
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """FastAPI dependency that returns the authenticated User or raises 401."""
+    """FastAPI dependency that returns the authenticated User or raises 401.
+
+    Accepts tokens from Authorization header (Bearer) or cookie 'token'.
+    Cookie fallback enables SSR auth guard to work with httpOnly cookies.
+    """
     user_id = decode_access_token(token)
+    # If no token in Authorization header, try cookie
+    if user_id is None:
+        cookie_token = request.cookies.get("token") if request else None
+        if cookie_token:
+            user_id = decode_access_token(cookie_token)
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

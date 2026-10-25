@@ -6,9 +6,11 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, codes
 
+from tests.conftest import bearer
+
 
 @pytest_asyncio.fixture
-async def project_with_user(app_fixture):
+async def project_with_user(app_fixture, client):
     """Create a user and project; return (project_id, user_id)."""
     from services.auth_service.domain.models import User as _User
     from services.project_service.domain.models import Project as _Project
@@ -17,6 +19,7 @@ async def project_with_user(app_fixture):
         user = _User(email="feat@example.com", password_hash="x", display_name="FeatTester")
         sess.add(user)
         await sess.flush()
+        client.headers.update(bearer(user.id))
 
         project = _Project(
             id=uuid4(),
@@ -31,7 +34,7 @@ async def project_with_user(app_fixture):
 
 
 @pytest_asyncio.fixture
-async def project_with_delegate(app_fixture):
+async def project_with_delegate(app_fixture, client):
     """Create a user, project, and delegate; return (project_id, owner_uid, delegate_uid)."""
     from services.auth_service.domain.models import User as _User
     from services.project_service.domain.models import Project as _Project, ProjectDelegate
@@ -53,6 +56,7 @@ async def project_with_delegate(app_fixture):
         del_user = _User(email="delegate2@example.com", password_hash="x", display_name="Del2")
         sess.add(del_user)
         await sess.flush()
+        client.headers.update(bearer(del_user.id))  # listing is checked from the delegate's side
 
         pd = ProjectDelegate(
             id=uuid4(),
@@ -223,27 +227,23 @@ async def test_add_delegate(client: AsyncClient, project_with_user):
     assert list_resp.status_code == codes.OK
 
 
-async def test_add_delegate_via_api(client: AsyncClient, project_with_user):
-    """Add delegate via API with a new user created in DB."""
+async def test_add_delegate_via_api(client: AsyncClient, app_fixture, project_with_user):
+    """Add delegate via API with a new user created in DB; delegating to yourself is rejected."""
     from services.auth_service.domain.models import User as _User
 
-    project_id = project_with_user[0]
-    owner_uid = project_with_user[1]
+    project_id, owner_uid = project_with_user
+    async with app_fixture.state.session_factory() as sess:
+        colleague = _User(email="colleague@example.com", password_hash="x")
+        sess.add(colleague)
+        await sess.commit()
+        colleague_id = str(colleague.id)
 
-    # Create delegate user via import queries (commits)
-    csv_text = "text,url\ntest,\n"
-    await client.post(
-        f"/api/projects/{project_id}/queries/import",
-        content=csv_text,
-        headers={"Content-Type": "text/csv"},
-    )
-
-    # Add delegate via API using owner as inviter
     add_resp = await client.post(
-        f"/api/projects/{project_id}/delegates",
-        json={"delegate_user_id": owner_uid, "role": "edit", "inviter_user_id": owner_uid},
+        f"/api/projects/{project_id}/delegates", json={"delegate_user_id": colleague_id, "role": "edit"}
     )
-    assert add_resp.status_code in (codes.OK, 409)  # OK if new, 409 if duplicate
+    assert add_resp.status_code == codes.OK, add_resp.text
+    self_resp = await client.post(f"/api/projects/{project_id}/delegates", json={"delegate_user_id": owner_uid})
+    assert self_resp.status_code == codes.UNPROCESSABLE_ENTITY
 
 
 async def test_remove_nonexistent_delegate(client: AsyncClient, project_with_user):

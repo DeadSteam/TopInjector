@@ -54,11 +54,12 @@ async def test_same_domain_allowed_for_different_users(session):
     await session.commit()
 
 
-async def test_same_domain_rejected_for_same_user(session):
+async def test_same_domain_allowed_for_same_user(session):
+    """Several campaigns may target one domain (e.g. a copied project)."""
     user = await _user(session)
     await _project(session, user)
-    with pytest.raises(IntegrityError):
-        await _project(session, user)
+    await _project(session, user)
+    assert len((await session.execute(select(Project))).scalars().all()) == 2
 
 
 async def test_deleting_user_cascades_to_projects_and_queries(session):

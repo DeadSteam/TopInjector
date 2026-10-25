@@ -1,6 +1,6 @@
 """Queue task domain model and enums."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -29,6 +29,10 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     NOT_FOUND = "not_found"
     STUCK = "stuck"
+
+
+# A pending task waiting longer than this shows up as overdue ("Просрочено")
+PENDING_OVERDUE_AFTER = timedelta(minutes=30)
 
 
 def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -62,14 +66,15 @@ class QueueTask(UUIDModel):
     pending_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        # At most one *pending* task per URL within a project; finished tasks may repeat.
+        # At most one *pending* generated task per URL within a project; finished tasks may repeat,
+        # and manual prokliks may target the same query several times.
         Index(
             "uq_queue_tasks_pending_click_url",
             "project_id",
             "click_url",
             unique=True,
-            postgresql_where=text("status = 'pending'"),
-            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending' AND source != 'proklik'"),
+            sqlite_where=text("status = 'pending' AND source != 'proklik'"),
         ),
     )
 

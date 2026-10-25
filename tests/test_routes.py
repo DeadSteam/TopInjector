@@ -7,12 +7,14 @@ import pytest_asyncio
 from httpx import AsyncClient, codes
 from sqlalchemy import select
 
+from tests.conftest import bearer
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────────── #
 
 
 @pytest_asyncio.fixture
-async def test_user_and_project(app_fixture):
+async def test_user_and_project(app_fixture, client):
     """Create a user + project and return (project_id, query_id_factory)."""
     from services.auth_service.domain.models import User
     from services.project_service.domain.models import Project as _Project
@@ -21,6 +23,7 @@ async def test_user_and_project(app_fixture):
         user = User(email="route-test@example.com", password_hash="x", display_name="RouteTester")
         session.add(user)
         await session.flush()
+        client.headers.update(bearer(user.id))
 
         project = _Project(
             id=uuid4(),
@@ -34,7 +37,7 @@ async def test_user_and_project(app_fixture):
 
 
 @pytest_asyncio.fixture
-async def project_with_queries(app_fixture):
+async def project_with_queries(app_fixture, client):
     """Create user, project, and two queries. Returns (project_id, query_ids)."""
     from services.project_service.domain.models import Query as _Query
 
@@ -45,6 +48,7 @@ async def project_with_queries(app_fixture):
         user = User(email="rq-test@example.com", password_hash="x", display_name="RQTester")
         session.add(user)
         await session.flush()
+        client.headers.update(bearer(user.id))
 
         project = _Project(
             id=uuid4(),
@@ -76,7 +80,7 @@ async def project_with_queries(app_fixture):
 # ── Projects: create + list ------------------------------------------------ #
 
 
-async def test_create_project(client: AsyncClient, app_fixture):
+async def test_create_project(client: AsyncClient, app_fixture, logged_in):
     # Create user and project in the same session (SQLite FK needs same transaction)
     async with app_fixture.state.session_factory() as sess:
         from services.auth_service.domain.models import User
@@ -96,7 +100,7 @@ async def test_create_project(client: AsyncClient, app_fixture):
     assert "id" in data or "detail" in data
 
 
-async def test_list_projects_empty(client: AsyncClient):
+async def test_list_projects_empty(client: AsyncClient, logged_in):
     resp = await client.get("/api/projects/")
     assert resp.status_code == codes.OK
 
@@ -275,7 +279,7 @@ async def test_positions_with_history(client: AsyncClient, app_fixture, project_
 # ── Analytics: summary ----------------------------------------------------- #
 
 
-async def test_analytics_summary(client: AsyncClient):
+async def test_analytics_summary(client: AsyncClient, logged_in):
     resp = await client.get("/api/analytics/summary")
     assert resp.status_code == codes.OK
     data = resp.json()
@@ -298,7 +302,7 @@ async def test_analytics_clicks(client: AsyncClient, test_user_and_project):
 # ── Analytics: positions endpoint ------------------------------------------ #
 
 
-async def test_analytics_positions(client: AsyncClient):
+async def test_analytics_positions(client: AsyncClient, logged_in):
     resp = await client.get("/api/analytics/positions")
     assert resp.status_code == codes.OK
     data = resp.json()
@@ -341,11 +345,11 @@ async def test_external_projects_list(client: AsyncClient, app_fixture, test_use
 # ── Edge cases: invalid project id ----------------------------------------- #
 
 
-async def test_queue_stats_invalid_project(client: AsyncClient):
+async def test_queue_stats_invalid_project(client: AsyncClient, logged_in):
     resp = await client.get("/api/projects/00000000-0000-0000-0000-000000000000/queue-stats")
-    assert resp.status_code in (codes.OK, 422)
+    assert resp.status_code == codes.NOT_FOUND
 
 
-async def test_positions_invalid_project(client: AsyncClient):
+async def test_positions_invalid_project(client: AsyncClient, logged_in):
     resp = await client.get("/api/projects/00000000-0000-0000-0000-000000000000/positions")
-    assert resp.status_code in (codes.OK, 422)
+    assert resp.status_code == codes.NOT_FOUND
