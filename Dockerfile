@@ -1,23 +1,24 @@
-FROM python:3.12-slim AS builder
-WORKDIR /app
-COPY pyproject.toml .
-RUN pip install --no-cache-dir uv && uv pip install --system -r pyproject.toml
-
 FROM python:3.12-slim
-ENV PYTHONPATH=/app
-ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=ghcr.io/astral-sh/uv:0.9.28 /uv /bin/uv
 
-# Install Python deps first (from builder cache), then supervisor system pkg
-COPY pyproject.toml .
-RUN pip install --no-cache-dir uv && \
-    uv pip install --system -r pyproject.toml && \
-    apt-get update && apt-get install -y --no-install-recommends supervisor && \
-    rm /etc/supervisor/supervisord.conf && \
-    rm -rf /var/lib/apt/lists/*
+ENV PYTHONPATH=/app \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/opt/venv/bin:$PATH"
+WORKDIR /app
+
+# Locked runtime dependencies first (cached unless pyproject.toml / uv.lock change); supervisor is one of them
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-dev
 
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY . /app/
 
-RUN mkdir -p /var/log/supervisor
+# Run as an unprivileged user instead of root.
+RUN useradd --system --no-create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app /opt/venv
+USER appuser
 
 ENTRYPOINT ["supervisord", "-c", "/etc/supervisor/supervisord.conf"]
