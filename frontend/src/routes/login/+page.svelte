@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from "$lib/api";
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 
 	let email = $state("");
 	let password = $state("");
@@ -8,6 +9,15 @@
 	let loading = $state(false);
 	let error = $state("");
 	let isRegister = $state(false);
+
+	// White-label branding for a custom domain (null = default TopInjector look).
+	let brand = $state<{ platform_name?: string; accent_color?: string } | null>(null);
+	const accent = $derived(brand?.accent_color || "#3B82F6");
+	const brandName = $derived(brand?.platform_name?.trim() || "");
+
+	onMount(async () => {
+		brand = await api.whitelabel.public(window.location.hostname);
+	});
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -43,7 +53,11 @@
 	<div class="w-full max-w-md p-8 bg-white rounded-2xl shadow-xl">
 		<div class="text-center mb-8">
 			<h1 class="text-2xl font-bold text-gray-900">
-				<span class="text-blue-600">Top</span>Injector
+				{#if brandName}
+					{brandName}
+				{:else}
+					<span style="color:{accent}">Top</span>Injector
+				{/if}
 			</h1>
 			<p class="text-sm text-gray-500 mt-2">{isRegister ? "Регистрация" : "Вход в аккаунт"}</p>
 		</div>
@@ -72,7 +86,7 @@
 				<input id="password" type="password" bind:value={password} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all" placeholder="••••••••" required minlength="8"/>
 			</div>
 
-			<button type="submit" disabled={loading} class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+			<button type="submit" disabled={loading} style={brand ? `background-color:${accent}` : ''} class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
 				{loading ? (isRegister ? "Регистрация..." : "Вход...") : (isRegister ? "Зарегистрироваться" : "Войти")}
 			</button>
 		</form>

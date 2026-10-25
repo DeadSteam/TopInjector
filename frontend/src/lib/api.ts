@@ -452,5 +452,10 @@ export const api = {
 		update: (data: Record<string, unknown>) =>
 			fetcher("/api/whitelabel", { method: "PUT", body: JSON.stringify(data) }),
 		checkDns: () => fetcher("/api/whitelabel/check-dns", { method: "POST" }),
+		/** Public branding for a custom domain; null when none is configured. No auth. */
+		public: (domain: string): Promise<Record<string, any> | null> =>
+			fetch(`${BASE_URL}/api/whitelabel/public/${encodeURIComponent(domain)}`)
+				.then(r => (r.ok ? r.json() : null))
+				.catch(() => null),
 	},
 };
