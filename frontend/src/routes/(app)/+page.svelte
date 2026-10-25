@@ -2,6 +2,7 @@
 	import "../../app.css";
 	import { api } from "$lib/api";
 	import { onMount, onDestroy } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 
 	interface ProjectGroup {
 		id: string;
@@ -56,7 +57,7 @@
 
 	// Source breakdown columns
 	let showSourceBreakdown = $state(false);
-	let sourceData: Record<string, { completed_by_source: Record<string, number>; pending_by_source: Record<string, number> }> = {};
+	let sourceData = $state<Record<string, { completed_by_source: Record<string, number>; pending_by_source: Record<string, number> }>>({});
 	let sourceLoading = $state(false);
 
 	// Overdue filter
@@ -91,6 +92,7 @@
 	let createFormDomain = $state("");
 	let createFormRegion = $state("");
 	let createFormStrategy = $state("daily");
+	let createFormDailyLimit = $state(100);
 	let createFormGroupId = $state<string>("all");
 	let createFormIntegration = $state("default");
 	let createFormScheduleStart = $state("");
@@ -175,7 +177,7 @@
 	let bulkEditDailyLimit = $state(0);
 	let bulkEditRegion = $state("");
 	let showBulkDelegateModal = $state(false);
-	let bulkDelegateUserId = $state("");
+	let bulkDelegateEmail = $state("");
 	let bulkDelegateRole = $state("view");
 	let showBulkAutoStopModal = $state(false);
 	let bulkAutoStopAt = $state("");
@@ -270,6 +272,7 @@
 			projects = resp?.items ?? resp ?? [];
 			totalProjects = resp?.total ?? projects.length;
 			totalFiltered = resp?.total ?? null;
+			allRegions = resp?.regions ?? allRegions;
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки проектов";
 			projects = [];
@@ -353,7 +356,7 @@
 			name: createFormName,
 			domain: createFormDomain,
 			strategy_type: createFormStrategy,
-			daily_limit: 100,
+			daily_limit: createFormDailyLimit,
 			integrations: {},
 			scheduling_window: null,
 			query_modifications: {},
@@ -390,7 +393,7 @@
 			await api.projects.create(data);
 			showCreateModal = false;
 			createFormName = ""; createFormDomain = ""; createFormRegion = "";
-			createFormStrategy = "daily"; createFormGroupId = "all";
+			createFormStrategy = "daily"; createFormGroupId = "all"; createFormDailyLimit = 100;
 			createFormIntegration = "default";
 			createFormScheduleStart = ""; createFormScheduleEnd = "";
 			createFormModsCapital = false; createFormModsRandomCaps = false;
@@ -458,7 +461,7 @@
 		if (bulkEditRegion) updates.region = bulkEditRegion;
 		if (!updates.daily_limit && !updates.region) { showBulkEditModal = false; return; }
 		try {
-			await api.projects.bulkEdit({ project_ids: [...selectedProjectIds], updates });
+			await api.projects.bulkEdit({ project_ids: [...selectedProjectIds], ...updates });
 			selectedProjectIds = [];
 			showBulkToolbar = false;
 			showBulkEditModal = false;
@@ -473,22 +476,22 @@
 	function bulkDelegateSelected() {
 		if (selectedProjectIds.length === 0) return;
 		showBulkDelegateModal = true;
-		bulkDelegateUserId = "";
+		bulkDelegateEmail = "";
 		bulkDelegateRole = "view";
 	}
 
 	async function confirmBulkDelegate() {
-		if (!bulkDelegateUserId.trim() || selectedProjectIds.length === 0) return;
+		if (!bulkDelegateEmail.trim() || selectedProjectIds.length === 0) return;
 		try {
 			await api.projects.bulkDelegate({
 				project_ids: [...selectedProjectIds],
-				delegate_user_id: bulkDelegateUserId.trim(),
+				email: bulkDelegateEmail.trim(),
 				role: bulkDelegateRole,
 			});
 			selectedProjectIds = [];
 			showBulkToolbar = false;
 			showBulkDelegateModal = false;
-			bulkDelegateUserId = "";
+			bulkDelegateEmail = "";
 			await loadProjects();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Ошибка bulk-делегирования';
@@ -521,11 +524,8 @@
 
 	function showContextMenu(e: MouseEvent, projectId: string) {
 		e.preventDefault();
+		e.stopPropagation(); // otherwise the document click handler closes the menu right away
 		contextMenu = { x: e.clientX, y: e.clientY, projectId };
-	}
-
-	if (typeof document !== 'undefined') {
-		document.addEventListener("click", () => { contextMenu = null; });
 	}
 
 	async function copyProject(id: string) {
@@ -548,11 +548,14 @@
 	function editProject(id: string) {
 		const proj = projects.find(p => p.id === id);
 		if (!proj) return;
+		showCreateModal = true; // the create form doubles as the edit form
 		editingProjectId = id;
 		createFormName = proj.name;
 		createFormDomain = proj.domain;
 		createFormRegion = proj.region || "";
 		createFormStrategy = proj.strategy_type || "daily";
+		createFormDailyLimit = proj.daily_limit ?? 100;
+		createFormGroupId = proj.group_id || "all";
 
 		// Load full project details for advanced fields
 		api.projects.get(id).then(full => {
@@ -566,6 +569,7 @@
 				createFormModsRandomCaps = !!full.query_modifications.random_caps;
 				createFormModsTypos = !!full.query_modifications.typos;
 				createFormModsTrailingSpace = !!full.query_modifications.trailing_space;
+			}
 			// Load geo settings for multigeo builder
 			if (full.geo_settings && full.geo_settings.type === "multigeo") {
 				const percents = full.geo_settings.percents || {};
@@ -573,8 +577,12 @@
 			} else {
 				multigeoRegions = [];
 			}
-			}
 		}).catch(() => { /* fallback to defaults */ });
+	}
+
+	function closeProjectModal() {
+		showCreateModal = false;
+		editingProjectId = null;
 	}
 
 	async function saveEdit() {
@@ -586,6 +594,8 @@
 			domain: createFormDomain,
 			region: createFormRegion || undefined,
 			strategy_type: createFormStrategy,
+			daily_limit: createFormDailyLimit,
+			group_id: createFormGroupId === "all" ? null : createFormGroupId,
 		};
 
 		// Integration
@@ -616,7 +626,7 @@
 
 		try {
 			await api.projects.update(editingProjectId, data);
-			editingProjectId = null;
+			closeProjectModal();
 			await loadProjects();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка сохранения";
@@ -662,9 +672,10 @@
 		showGroupModal = true;
 	}
 
-	// Available regions from projects data
-	const allRegions = $derived([...new Set(projects.map(p => p.region).filter(Boolean))]);
+	// Every region among the user's projects (from the API, not just the current page)
+	let allRegions = $state<string[]>([]);
 	const strategies = ["all", "daily", "monthly", "hourly"];
+	const strategyLabels: Record<string, string> = { all: "Все стратегии", daily: "Суточная", monthly: "Месячная", hourly: "Часовая" };
 
 	// Toggle column visibility
 	function toggleCol(col: string) {
@@ -697,13 +708,28 @@
 		autoRefreshId = window.setInterval(loadProjects, 30000); // poll every 30s
 	});
 
+	// Sidebar server links and group links open "/?integration_type=<key>" / "/?group_id=<id>".
+	// Same-page navigation doesn't remount the component, so apply them after every navigation.
+	afterNavigate(() => {
+		const urlParams = new URLSearchParams(window.location.search);
+		const integration = urlParams.get("integration_type");
+		const group = urlParams.get("group_id");
+		if ((integration && integration !== filterIntegration) || (group && group !== filterGroup)) {
+			filterIntegration = integration || filterIntegration;
+			filterGroup = group || filterGroup;
+			currentPage = 1;
+			loadProjects();
+		}
+	});
+
 	onDestroy(() => {
 		if (searchDebounce) clearTimeout(searchDebounce);
 		if (autoRefreshId) clearInterval(autoRefreshId);
 	});
 
-	const filteredGroups = $derived(groups.filter(g => g.name.toLowerCase().includes(filterGroup.toLowerCase())));
 </script>
+
+<svelte:document onclick={() => (contextMenu = null)} />
 
 <div class="p-6 max-w-[1600px]">
 	<!-- Header -->
@@ -751,7 +777,7 @@
 
 		<select bind:value={filterStrategy} onchange={handleFilterResetPage} class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
 			{#each strategies as s}
-				<option value={s}>{s === "all" ? "Все стратегии" : s}</option>
+				<option value={s}>{strategyLabels[s]}</option>
 			{/each}
 		</select>
 
@@ -800,15 +826,12 @@
 					<thead class="bg-gray-50 border-b border-gray-200">
 						<tr>
 							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10">
-							<input type="checkbox" bind:checked={selectAllChecked} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-								oninput={() => {
-									if (selectAllChecked) {
-									selectedProjectIds = projects.map(p => p.id);
-								} else {
-									selectedProjectIds = [];
-								}
-								showBulkToolbar = selectedProjectIds.length > 0;
-							}} />
+							<input type="checkbox" checked={selectAllChecked} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+								onchange={(e) => {
+									selectedProjectIds = e.currentTarget.checked ? projects.map(p => p.id) : [];
+									showBulkToolbar = selectedProjectIds.length > 0;
+								}} />
+							</th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600 w-10"></th>
 							<th class="px-4 py-3 text-left font-medium text-gray-600">Название</th>
 							{#if showRegionCol}
@@ -841,10 +864,11 @@
 								<td class="px-4 py-3">
 									<label class="inline-flex cursor-pointer">
 									<input type="checkbox" checked={selectedProjectIds.includes(project.id)} class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-										oninput={() => {
-											selectedProjectIds = selectedProjectIds.includes(project.id) ? [...selectedProjectIds, project.id] : selectedProjectIds.filter(id => id !== project.id);
+										onchange={() => {
+											selectedProjectIds = selectedProjectIds.includes(project.id) ? selectedProjectIds.filter(id => id !== project.id) : [...selectedProjectIds, project.id];
 											showBulkToolbar = selectedProjectIds.length > 0;
 										}} />
+									</label>
 								</td>
 								<!-- Active toggle -->
 								<td class="px-4 py-3">
@@ -1000,16 +1024,16 @@
 
 	<!-- Create project modal -->
 	{#if showCreateModal}
-		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onmousedown={(e) => e.target === e.currentTarget && (showCreateModal = false)}>
-			<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 m-4">
+		<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onmousedown={(e) => e.target === e.currentTarget && closeProjectModal()}>
+			<div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 m-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
 				<div class="flex items-center justify-between mb-4">
-					<h2 class="text-lg font-semibold text-gray-900">Создать проект</h2>
-					<button onmousedown={(e) => { e.stopPropagation(); showCreateModal = false; }} class="text-gray-400 hover:text-gray-600">
+					<h2 class="text-lg font-semibold text-gray-900">{editingProjectId ? "Редактировать проект" : "Создать проект"}</h2>
+					<button onmousedown={(e) => { e.stopPropagation(); closeProjectModal(); }} class="text-gray-400 hover:text-gray-600">
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
 					</button>
 				</div>
 
-				<form onsubmit={(e) => { e.preventDefault(); createProject(); }} class="space-y-4">
+				<form onsubmit={(e) => { e.preventDefault(); editingProjectId ? saveEdit() : createProject(); }} class="space-y-4">
 					<div>
 						<label class="block text-sm font-medium text-gray-700 mb-1">Название проекта</label>
 						<input type="text" bind:value={createFormName} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Мой проект" required />
@@ -1029,6 +1053,10 @@
 							<option value="monthly">Месячная</option>
 							<option value="hourly">Часовая (равномерно по часам)</option>
 						</select>
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">{createFormStrategy === "monthly" ? "Кликов в месяц" : "Кликов в день"}</label>
+						<input type="number" min="0" bind:value={createFormDailyLimit} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
 					</div>
 					<div>
 						<label class="block text-sm font-medium text-gray-700 mb-1">Группа проекта</label>
@@ -1151,11 +1179,11 @@
 				</form>
 
 				<div class="flex justify-end gap-3 mt-6">
-					<button onmousedown={(e) => { e.stopPropagation(); showCreateModal = false; }} class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+					<button onmousedown={(e) => { e.stopPropagation(); closeProjectModal(); }} class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">
 						Отмена
 					</button>
-					<button type="submit" onclick={createProject} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-						Создать
+					<button type="submit" onclick={() => (editingProjectId ? saveEdit() : createProject())} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+						{editingProjectId ? "Сохранить" : "Создать"}
 					</button>
 				</div>
 			</div>
@@ -1204,8 +1232,8 @@
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">Делегировать {selectedProjectIds.length} проектов</h2>
 				<form onsubmit={(e) => { e.preventDefault(); confirmBulkDelegate(); }} class="space-y-4">
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">ID пользователя</label>
-						<input type="text" bind:value={bulkDelegateUserId} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Введите UserID" required />
+						<label class="block text-sm font-medium text-gray-700 mb-1">E-mail пользователя</label>
+						<input type="email" bind:value={bulkDelegateEmail} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="colleague@example.com" required />
 					</div>
 					<div>
 						<label class="block text-sm font-medium text-gray-700 mb-1">Роль</label>

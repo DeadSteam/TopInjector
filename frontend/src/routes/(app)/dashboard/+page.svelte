@@ -7,13 +7,11 @@
 		overdue: 0, today_planned: 0, today_completed: 0, balance: 0
 	});
 	let serversData = $state<Array<{
-		integration: string; label: string; pending: number; speed_per_15min: number; completed_24h: number; hourly_bars: number[];
+		integration: string; label: string; pending: number; speed_per_15min: number; completed_24h: number; not_found_24h: number; hourly_bars: number[];
 	}>>([]);
-	let loading = $state(true);
-	let selectedServer = $state<string | null>(null);
+	let loading = $state(true);  // first load only; refreshes update in place
 
 	async function loadAll() {
-		loading = true;
 		try {
 			const [stats, servers] = await Promise.all([
 				api.queue.dashboardStats(),
@@ -57,13 +55,10 @@
 
 	const hourLabels = formatHourlyHours();
 
-	function selectServer(key: string) {
-		selectedServer = selectedServer === key ? null : key;
-	}
 </script>
 
 <div class="p-6">
-	<div class="flex items-center justify-between mb-6">
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
 		<h1 class="text-2xl font-bold text-gray-900">Сводка</h1>
 		<div class="flex items-center gap-3">
 			<span class="text-xs text-gray-400">Обновляется каждые 30с</span>
@@ -118,7 +113,7 @@
 							</div>
 
 							<!-- Metrics row -->
-							<div class="grid grid-cols-4 gap-3 mb-4">
+							<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
 								<div class="bg-gray-50 rounded-lg p-3 text-center">
 									<p class="text-xl font-bold {server.pending > 0 ? 'text-red-600' : 'text-gray-900'}">{server.pending}</p>
 									<p class="text-xs text-gray-500 mt-1">Ожидают</p>
@@ -129,11 +124,11 @@
 								</div>
 								<div class="bg-gray-50 rounded-lg p-3 text-center">
 									<p class="text-xl font-bold text-green-600">{server.completed_24h}</p>
-									<p class="text-xs text-gray-500 mt-1">Мои клики</p>
+									<p class="text-xs text-gray-500 mt-1">Выполнено за 24ч</p>
 								</div>
 								<div class="bg-gray-50 rounded-lg p-3 text-center">
-									<p class="text-xl font-bold text-blue-600">{Math.max(server.speed_per_15min * 4, Math.floor(server.completed_24h / 2))}</p>
-									<p class="text-xs text-gray-500 mt-1">Остальные клики</p>
+									<p class="text-xl font-bold {server.not_found_24h > 0 ? 'text-amber-600' : 'text-gray-900'}">{server.not_found_24h}</p>
+									<p class="text-xs text-gray-500 mt-1">Не найдено за 24ч</p>
 								</div>
 							</div>
 
@@ -143,7 +138,7 @@
 								<div class="flex items-end gap-px h-32 bg-gray-50 rounded-lg p-2">
 									{#each server.hourly_bars as count, hourIdx}
 										{#if count > 0}
-											<div class="relative flex-1 group" title="{hourLabels[hourIdx]}: {count} кликов">
+											<div class="relative flex-1 h-full flex flex-col justify-end group" title="{hourLabels[hourIdx]}: {count} кликов">
 												<div class="w-full bg-blue-500 hover:bg-blue-600 transition-colors rounded-t-sm cursor-pointer"
 													style="height: calc({count / getMaxValue(server.hourly_bars)} * 100%); min-height: 2px;"></div>
 											</div>
@@ -161,11 +156,16 @@
 										{/if}
 									{/each}
 								</div>
-								<p class="text-xs text-gray-400 mt-3">Неактивные пользователи и проекты не учитываются</p>
+								<p class="text-xs text-gray-400 mt-3">Выполненные клики за последние 24 часа по часам. Остановленные проекты не учитываются</p>
 							</div>
 						</div>
 					{/each}
 				</div>
+			</div>
+
+		{:else if activeTab === 'overview'}
+			<div class="bg-white border border-gray-200 rounded-xl p-12 shadow-sm text-center text-gray-400">
+				Пока нет данных: у активных проектов нет задач в очереди и результатов за последние 24 часа
 			</div>
 
 		<!-- Servers Tab: compact cards -->
@@ -173,11 +173,11 @@
 			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
 				<h3 class="text-base font-semibold text-gray-900 mb-4">Все сервера</h3>
 				{#if serversData.length === 0}
-					<div class="text-center py-12 text-gray-400">Нет данных о серверах — нет активных проектов</div>
+					<div class="text-center py-12 text-gray-400">Нет данных: у активных проектов нет задач и результатов за 24 часа</div>
 				{:else}
 					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 						{#each serversData as server}
-							<div class="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors" onclick={() => selectServer(server.integration)}>
+							<div class="border border-gray-200 rounded-lg p-4">
 								<h4 class="font-semibold text-gray-900 mb-3">{server.label}</h4>
 								<div class="grid grid-cols-2 gap-2">
 									<div class="bg-gray-50 rounded p-2 text-center">
@@ -186,15 +186,15 @@
 									</div>
 									<div class="bg-gray-50 rounded p-2 text-center">
 										<p class="text-lg font-bold text-green-600">{server.completed_24h}</p>
-										<p class="text-xs text-gray-500">Мои клики</p>
+										<p class="text-xs text-gray-500">Выполнено за 24ч</p>
 									</div>
 									<div class="bg-gray-50 rounded p-2 text-center">
 										<p class="text-lg font-bold text-gray-900">{server.speed_per_15min}</p>
 										<p class="text-xs text-gray-500">Скорость / 15мин</p>
 									</div>
 									<div class="bg-gray-50 rounded p-2 text-center">
-										<p class="text-lg font-bold text-blue-600">—</p>
-										<p class="text-xs text-gray-500">Остальные клики</p>
+										<p class="text-lg font-bold {server.not_found_24h > 0 ? 'text-amber-600' : 'text-gray-900'}">{server.not_found_24h}</p>
+										<p class="text-xs text-gray-500">Не найдено за 24ч</p>
 									</div>
 								</div>
 							</div>

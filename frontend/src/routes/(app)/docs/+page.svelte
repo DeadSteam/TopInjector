@@ -6,14 +6,13 @@
 
 	onMount(() => {
 		const script = document.createElement('script');
-		script.src = 'https://cdn.jsdelivr.net/npm/redoc/bundles/redoc.standalone.js';
+		script.src = 'https://cdn.jsdelivr.net/npm/redoc@2.1.5/bundles/redoc.standalone.js';
 		script.onload = () => {
 			if (typeof Redoc === 'undefined') return;
 			const el = document.getElementById('redoc-container');
 			if (!el) return;
 
-			const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-			fetch(`${BASE_URL}/api/internal/openapi.json`)
+			fetch("/api/openapi.json")
 				.then(r => r.json())
 				.then((spec) => {
 					const opts = {
@@ -35,10 +34,10 @@
 <div class="p-6 max-w-[1600px]">
 	<h1 class="text-2xl font-bold text-gray-900 mb-6">API Документация</h1>
 
-	<p class="text-sm text-gray-500 mb-4">Интерактивная документация API TopInjector. Для корректной работы необходим доступ к Gateway (порт 8080).</p>
+	<p class="text-sm text-gray-500 mb-4">Интерактивная документация API TopInjector (OpenAPI). Её же можно открыть в Swagger: /api/docs.</p>
 
 	<!-- Redoc container -->
-	<div id="redoc-container" class="bg-white border border-gray-200 rounded-xl shadow-sm min-h-[600px]" />
+	<div id="redoc-container" class="bg-white border border-gray-200 rounded-xl shadow-sm min-h-[600px]"></div>
 
 	<!-- Fallback documentation when spec endpoint unavailable -->
 	<div id="fallback-docs" class="hidden space-y-6">
@@ -68,7 +67,7 @@
 						<span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/terms/upsert</span>
 					</div>
-					<p class="text-sm text-gray-600">Массовое добавление/обновление ключевых запросов. Тело: array of {"{"} text, url, click_url, geo, daily_count {"}"}}.</p>
+					<p class="text-sm text-gray-600">Добавление/обновление запросов по тексту (существующие сохраняют id). Тело: {"{"} queries: [{"{"} text, url, click_url, geo, daily_clicks {"}"}] {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -76,7 +75,7 @@
 						<span class="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/queue/push</span>
 					</div>
-					<p class="text-sm text-gray-600">Добавление задач в очередь. Тело: <code class="bg-gray-100 px-1 rounded">&#123; project_id, tasks: [...] &#125;</code>.</p>
+					<p class="text-sm text-gray-600">Добавление задач в очередь проекта токена. Тело: <code class="bg-gray-100 px-1 rounded">&#123; tasks: [&#123; click_url, query_id?, source?, geo? &#125;] &#125;</code>.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -84,7 +83,7 @@
 						<span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/queue/results</span>
 					</div>
-					<p class="text-sm text-gray-600">Отправка результатов взаимодействия. Тело: <code class="bg-gray-100 px-1 rounded">&#123; project_id, results: [...] &#125;</code>.</p>
+					<p class="text-sm text-gray-600">Взять задачи в работу: <code class="bg-gray-100 px-1 rounded">POST /queue/claim &#123; limit &#125;</code> (переводит их в in_progress). Отправка результатов: <code class="bg-gray-100 px-1 rounded">&#123; results: [&#123; task_id, status, position? &#125;] &#125;</code>.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -92,7 +91,7 @@
 						<span class="px-2 py-0.5 bg-pink-100 text-pink-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/users</span>
 					</div>
-					<p class="text-sm text-gray-600">Пригласить пользователя в организацию. Тело: {"{"} email, role {"}"}}.</p>
+					<p class="text-sm text-gray-600">Пользователи организации — пока не реализовано (ответ 501).</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -100,7 +99,7 @@
 						<span class="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/balance/add</span>
 					</div>
-					<p class="text-sm text-gray-600">Пополнить баланс проекта. Тело: {"{"} project_id, amount {"}"}.</p>
+					<p class="text-sm text-gray-600">Пополнить баланс проекта токена (в рублях). Тело: {"{"} amount {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">
@@ -108,7 +107,7 @@
 						<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">POST</span>
 						<span class="font-mono text-sm text-gray-900">/api/external/v1/balance/set</span>
 					</div>
-					<p class="text-sm text-gray-600">Установить баланс проекта. Тело: {"{"} project_id, amount {"}"}.</p>
+					<p class="text-sm text-gray-600">Установить баланс проекта токена (в рублях). Тело: {"{"} balance {"}"}.</p>
 				</div>
 
 				<div class="border border-gray-200 rounded-lg p-4">

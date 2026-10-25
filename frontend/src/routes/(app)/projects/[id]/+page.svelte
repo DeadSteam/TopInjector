@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { api } from "$lib/api";
-	import { onMount, onDestroy } from 'svelte';
+	import { api, downloadFile, safeHref } from "$lib/api";
+	import { onMount, onDestroy, untrack } from 'svelte';
 
 	interface QueryRow {
 		id: string;
@@ -34,7 +34,6 @@
 	let positionsData = $state<any[]>([]);
 	let trendLines = $state<any[]>([]);
 	let showChart = $state(true);
-	let chartHoverQuery = $state<string | null>(null);
 	let visibleTrendQueries = $state<Set<string>>(new Set());
 	let hoverDate = $state<string | null>(null);
 
@@ -44,10 +43,22 @@
 	// Chart dimensions
 	const dims = $derived(getChartDims());
 
-	// X-axis label indices (sample up to ~6 labels)
-	const xLabelIndices = $derived(
-		visibleTrendLines[0]?.data ? ([...Array(visibleTrendLines[0].data.length).keys()].map((k) => Math.min(k * Math.max(1, Math.floor(visibleTrendLines[0].data.length / 6)), visibleTrendLines[0].data.length - 1))) : []
-	);
+	// X-axis label indices: about 6 evenly spaced dates, always including the last one
+	const xLabelIndices = $derived.by(() => {
+		const n = visibleTrendLines[0]?.data?.length ?? 0;
+		const step = Math.max(1, Math.ceil(n / 6));
+		const indices: number[] = [];
+		for (let i = 0; i < n; i += step) indices.push(i);
+		if (n && indices[indices.length - 1] !== n - 1) indices.push(n - 1);
+		return indices;
+	});
+
+	// Position range of the visible lines; the best (smallest) position is drawn at the top
+	const trendRange = $derived.by(() => {
+		const all = visibleTrendLines.flatMap((l: any) => l.data.map((d: any) => d.position)).filter((p: number) => p >= 1);
+		return all.length ? { minP: Math.max(1, Math.min(...all) - 1), maxP: Math.max(...all) + 1 } : { minP: 1, maxP: 10 };
+	});
+	const TREND_COLORS = ["#3b82f6", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#0891b2", "#db2777", "#65a30d"];
 
 	// Hover helpers
 	const hoverIdx = $derived(visibleTrendLines[0]?.data?.findIndex((d: any) => d.date === hoverDate) ?? -1);
@@ -67,7 +78,7 @@
 
 	// Delegates
 	let delegates = $state<any[]>([]);
-	let newDelegateUserId = $state("");
+	let newDelegateEmail = $state("");
 	let newDelegateRole = $state("view");
 
 	// Markers
@@ -83,7 +94,7 @@
 
 	let analyticsSummary = $state<any>(null);
 	let timelineData = $state<TimelinePoint[]>([]);
-	const maxTimelineCount = (timelineData.length > 0 ? Math.max(...timelineData.map((d: any) => d.count), 1) : 1);
+	const maxTimelineCount = $derived(timelineData.length > 0 ? Math.max(...timelineData.map((d: any) => d.count), 1) : 1);
 	let trackingData = $state<TrackingPoint[]>([]);
 	let positionSummary = $state<PositionSummary | null>(null);
 
@@ -94,14 +105,17 @@
 	let editingQueryId = $state<string | null>(null);
 	let editingDailyClicks = $state(0);
 	let editingGeo = $state("");
+	let editingUrl = $state("");
 	let editingClickUrl = $state("");
 
 	// Query filters
 	let showFilters = $state(false);
 	let filterText = $state("");
-	let filterPositionMin = $state<number | undefined>(undefined);
-	let filterPositionMax = $state<number | undefined>(undefined);
-	let filterFrequencyMin = $state<number | undefined>(undefined);
+	// Number inputs set null when cleared, so "no filter" is checked with `== null`
+	let filterPositionMin = $state<number | null | undefined>(undefined);
+	let filterPositionMax = $state<number | null | undefined>(undefined);
+	let filterFrequencyMin = $state<number | null | undefined>(undefined);
+	const filtersActive = $derived(!!filterText || filterPositionMin != null || filterPositionMax != null || filterFrequencyMin != null);
 
 	function clearQueryFilters() {
 		filterText = "";
@@ -112,9 +126,9 @@
 
 	function matchesFilters(query: QueryRow): boolean {
 		if (filterText && !query.text.toLowerCase().includes(filterText.toLowerCase())) return false;
-		if (filterPositionMin !== undefined && (query.position === null || query.position < filterPositionMin)) return false;
-		if (filterPositionMax !== undefined && (query.position === null || query.position > filterPositionMax)) return false;
-		if (filterFrequencyMin !== undefined && (query.frequency === undefined || query.frequency === null || query.frequency < filterFrequencyMin)) return false;
+		if (filterPositionMin != null && (query.position == null || query.position < filterPositionMin)) return false;
+		if (filterPositionMax != null && (query.position == null || query.position > filterPositionMax)) return false;
+		if (filterFrequencyMin != null && (query.frequency == null || query.frequency < filterFrequencyMin)) return false;
 		return true;
 	}
 
@@ -124,7 +138,7 @@
 
 	// Project settings state
 	let settingIntegration = $state("default");
-	let availableIntegrations: Array<{key: string; label: string}> = [];
+	let availableIntegrations = $state<Array<{key: string; label: string}>>([]);
 	let settingScheduleStart = $state("");
 	let settingScheduleEnd = $state("");
 	let settingModsCapital = $state(false);
@@ -182,75 +196,85 @@
 
 	// CSV Import state
 	let showImportModal = $state(false);
-	let importPreview: any[] = [];
+	let importPreview = $state<any[]>([]);
 	let importLoading = $state(false);
 	let importCreated = $state(0);
 	let importSkipped = $state(0);
+	let importDone = $state(false);
+	let importFile: File | null = null;  // uploaded as-is; the preview below is only for the user
+	let importRowCount = $state(0);
 
-	function handleImportFile(event: Event) {
+	async function handleImportFile(event: Event) {
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
-		if (!file) return;
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			const text = e.target?.result as string;
-			parseCsvPreview(text);
-		};
-		reader.readAsText(file);
 		input.value = ""; // reset so same file can be re-selected
+		if (!file) return;
+		importFile = file;
+		const bytes = await file.arrayBuffer();
+		let text: string;
+		try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+		catch { text = new TextDecoder("windows-1251").decode(bytes); }  // older Excel "CSV"
+		parseCsvPreview(text.replace(/^\ufeff/, ""));
 	}
 
-	function handleExport() {
-		if (!queries.length) return;
-		const headers = ["text", "url", "click_url", "daily_clicks", "position", "completed"];
-		const rows = queries.map(q => [q.text, q.url, q.click_url, q.daily_clicks, q.position, q.completed].map(v => `"${String(v ?? "")}"`).join(","));
-		const csv = [headers.join(","), ...rows].join("\n");
-		const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = `queries_${projectId}_${new Date().toISOString().slice(0, 10)}.csv`;
-		a.click();
-		URL.revokeObjectURL(url);
+	async function handleExport() {
+		try {
+			await downloadFile(`/api/projects/${projectId}/queries/export.csv`, `${projectId}_queries.csv`);
+		} catch (err) {
+			error = err instanceof Error ? err.message : "Ошибка экспорта CSV";
+		}
+	}
+
+	// Splits one CSV line, honouring "quoted, values" and doubled quotes
+	function splitCsvLine(line: string, delimiter: string): string[] {
+		const cells: string[] = [];
+		let cell = "";
+		let quoted = false;
+		for (let i = 0; i < line.length; i++) {
+			const ch = line[i];
+			if (quoted) {
+				if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++; }
+				else if (ch === '"') quoted = false;
+				else cell += ch;
+			} else if (ch === '"') quoted = true;
+			else if (ch === delimiter) { cells.push(cell.trim()); cell = ""; }
+			else cell += ch;
+		}
+		cells.push(cell.trim());
+		return cells;
 	}
 
 	function parseCsvPreview(csvText: string) {
-		const lines = csvText.trim().split(/\r?\n/);
+		const lines = csvText.trim().split(/\r?\n/).filter(l => l.trim());
 		if (lines.length < 2) {
 			error = "CSV файл должен содержать заголовок и хотя бы одну строку данных";
 			return;
 		}
-		const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
-		importPreview = [];
-		for (let i = 1; i < Math.min(lines.length, 51); i++) { // max 50 preview rows
-			const cols = lines[i].split(",").map(c => c.trim().replace(/^["']|["']$/g, ""));
-			if (cols.length < 2) continue;
+		// Same rule as the server: the most frequent of , ; tab in the header line
+		const delimiter = [",", ";", "\t"].reduce((best, d) => lines[0].split(d).length > lines[0].split(best).length ? d : best, ",");
+		const headers = splitCsvLine(lines[0], delimiter);
+		const textColumn = headers.includes("text") ? "text" : headers.includes("Текст") ? "Текст" : headers[0];
+		importRowCount = lines.length - 1;
+		importPreview = lines.slice(1, 51).map(line => {  // up to 50 rows are shown
+			const cells = splitCsvLine(line, delimiter);
 			const row: Record<string, string> = {};
-			headers.forEach((h, idx) => { row[h] = cols[idx] || ""; });
-			importPreview.push(row);
-		}
+			headers.forEach((h, idx) => { row[h] = cells[idx] || ""; });
+			return { text: row[textColumn], url: row["url"] || "" };
+		});
 		showImportModal = true;
+		importDone = false;
 		importCreated = 0;
 		importSkipped = 0;
 	}
 
 	async function executeImport() {
-		if (importPreview.length === 0) return;
-		// Build CSV with standard headers the backend expects
-		const header = "text,url";
-		const rows = importPreview.map(row => {
-			const text = (row["text"] || row["Текст"] || "").trim();
-			const url = (row["url"] || "").trim();
-			if (!text) return null;
-			return `"${text.replace(/"/g, '""')}","${url}"`;
-		}).filter(Boolean);
-
-		const csvBody = [header, ...rows].join("\n");
+		if (!importFile) return;
 		importLoading = true;
 		try {
-			const result = await api.projects.importQueries(projectId, csvBody);
+			const result = await api.projects.importQueries(projectId, importFile);
 			importCreated = result.created || 0;
 			importSkipped = result.skipped || 0;
+			importDone = true;
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка импорта CSV";
 		} finally {
@@ -261,6 +285,8 @@
 	function resetImport() {
 		showImportModal = false;
 		importPreview = [];
+		importFile = null;
+		importDone = false;
 		importCreated = 0;
 		importSkipped = 0;
 	}
@@ -273,7 +299,7 @@
 	// Daily drill-down modal
 	let showDrillDown = $state(false);
 	let drillDate = $state("");
-	let drillClicks: any[] = [];
+	let drillClicks = $state<any[]>([]);
 	let drillLoading = $state(false);
 	let drillFilterSource = $state("all");
 	let drillFilterGeo = $state("");
@@ -285,12 +311,12 @@
 	// Proklik modal
 	let showProklik = $state(false);
 	let proklikCount = $state(1);
-	let proklikQueries: string[] = [];
+	let proklikQueries = $state<string[]>([]);
 	let proklikMode = $state<"all" | "selected">("all");
 	let proklikLoading = $state(false);
 
 	// Audit log state
-	let auditEntries: any[] = [];
+	let auditEntries = $state<any[]>([]);
 	let auditLoading = $state(false);
 	let auditPage = $state(1);
 
@@ -310,7 +336,7 @@
 	let boostStartFromNow = $state(true);
 	let boostScheduleStart = $state("");
 	let boostScheduleEnd = $state("");
-	let boostDayDist: Record<string, boolean> = { mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false };
+	let boostDayDist = $state<Record<string, boolean>>({ mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false });
 	let boostLoading = $state(false);
 
 	const statusColors: Record<string, string> = {
@@ -405,10 +431,10 @@
 	}
 
 	async function addDelegate() {
-		if (!newDelegateUserId.trim()) return;
+		if (!newDelegateEmail.trim()) return;
 		try {
-			await api.projects.addDelegate(projectId, { delegate_user_id: newDelegateUserId.trim(), role: newDelegateRole });
-			newDelegateUserId = "";
+			await api.projects.addDelegate(projectId, { email: newDelegateEmail.trim(), role: newDelegateRole });
+			newDelegateEmail = "";
 			newDelegateRole = "view";
 			await loadDelegates();
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка добавления делегата"; }
@@ -561,6 +587,7 @@
 		editingDailyClicks = query.daily_clicks;
 		editingGeo = query.geo ? JSON.stringify(query.geo, null, 2) : "";
 		editingClickUrl = query.click_url || "";
+		editingUrl = query.url || "";
 	}
 
 	async function saveEdit(queryId: string) {
@@ -571,6 +598,7 @@
 				try { updateData.geo = JSON.parse(editingGeo); } catch { /* keep original */ }
 			}
 			if (editingClickUrl) updateData.click_url = editingClickUrl;
+			updateData.url = editingUrl.trim() || null;
 			await api.projects.updateQuery(projectId, queryId, updateData);
 			await loadQueries();
 			await loadQueueStats();
@@ -667,7 +695,7 @@
 	}
 
 	function selectAll() {
-		const targets = showFilters ? filteredQueries() : queries;
+		const targets = filteredQueries();  // only what the table shows (filters apply even when the panel is closed)
 		if (targets.every(q => selectedQueryIds.has(q.id))) {
 			selectedQueryIds.clear();
 		} else {
@@ -761,77 +789,35 @@
 		return { containerW, containerH, marginL, marginR, marginT, marginB, innerW, innerH };
 	}
 
-	function buildChartPath(lines: any[]) {
-		if (!lines.length) return "";
-		const dates = lines[0].data.map((d: any) => d.date);
-		if (!dates.length) return "";
-
-		const allPositions = lines.flatMap((l: any) => l.data.map((d: any) => d.position));
-		const minP = Math.max(1, Math.min(...allPositions) - 1);
-		const maxP = Math.min(20, Math.max(...allPositions) + 1);
-
-		const { innerW, innerH } = getChartDims();
-		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
-		const yScale = (p: number) => innerH - ((p - minP) / (maxP - minP || 1)) * innerH;
-
-		let pathStr = "";
-		for (const line of lines) {
-			const pts = line.data.filter((d: any) => d.position >= 1);
-			if (pts.length < 2) continue;
-		 const segments = pts.map((d: any, i: number) => {
-				const absI = line.data.indexOf(d);
-				const x = xScale(absI);
-				const y = yScale(d.position);
-				return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-			}).join(' ');
-			pathStr += segments + " ";
-		}
-		return pathStr.trim();
+	function trendColor(text: string) {
+		return TREND_COLORS[Math.max(0, trendLines.findIndex((l: any) => l.text === text)) % TREND_COLORS.length];
 	}
-
-	function buildChartPoints(lines: any[]) {
-		if (!lines.length) return [];
-		const dates = lines[0].data.map((d: any) => d.date);
-		if (!dates.length) return [];
-
-		const allPositions = lines.flatMap((l: any) => l.data.map((d: any) => d.position));
-		const minP = Math.max(1, Math.min(...allPositions) - 1);
-		const maxP = Math.min(20, Math.max(...allPositions) + 1);
-
-		const { innerW, innerH } = getChartDims();
-		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
-		const yScale = (p: number) => innerH - ((p - minP) / (maxP - minP || 1)) * innerH;
-
-		const points: any[] = [];
-		for (const line of lines) {
-			line.data.forEach((d: any, idx: number) => {
-				if (d.position < 1) return;
-				points.push({ x: xScale(idx), y: yScale(d.position), query: line.text, date: d.date, position: d.position });
-			});
-		}
-		return points;
+	function trendX(i: number, n: number) {
+		return dims.marginL + (n > 1 ? (i / (n - 1)) * dims.innerW : dims.innerW / 2);
+	}
+	function trendY(position: number) {
+		const { minP, maxP } = trendRange;
+		return dims.marginT + ((position - minP) / (maxP - minP || 1)) * dims.innerH;
+	}
+	function trendPath(line: any) {
+		const n = line.data.length;
+		return line.data
+			.map((d: any, i: number) => ({ d, i }))
+			.filter(({ d }: any) => d.position >= 1)
+			.map(({ d, i }: any, k: number) => `${k === 0 ? "M" : "L"}${trendX(i, n).toFixed(1)},${trendY(d.position).toFixed(1)}`)
+			.join(" ");
 	}
 
 	function chartMouseMove(e: MouseEvent) {
-		const svg = e.currentTarget as SVGElement;
-		if (!svg || !chartHoverQuery) return;
+		const svg = e.currentTarget as SVGSVGElement;
+		const n = visibleTrendLines[0]?.data?.length ?? 0;
+		if (!svg || n === 0) return;
 		const rect = svg.getBoundingClientRect();
-		const mouseX = e.clientX - rect.left;
-		const mouseY = e.clientY - rect.top;
-		const { marginL, innerW } = getChartDims();
-
-		// Find nearest date to cursor
-		if (trendLines.length === 0) return;
-		const dates = trendLines[0].data.map((d: any) => d.date);
-		if (!dates.length) return;
-
-		const xScale = (i: number) => (dates.length > 1 ? (i / (dates.length - 1)) * innerW : innerW / 2);
-		const totalX = mouseX + marginL;
-		let nearestIdx = Math.round((totalX / innerW) * (dates.length - 1));
-		nearestIdx = Math.max(0, Math.min(dates.length - 1, nearestIdx));
-
-		hoverDate = dates[nearestIdx];
+		const x = ((e.clientX - rect.left) / rect.width) * dims.containerW; // viewBox units
+		const idx = Math.max(0, Math.min(n - 1, Math.round(((x - dims.marginL) / dims.innerW) * (n - 1))));
+		hoverDate = visibleTrendLines[0].data[idx].date;
 	}
+
 
 	function startAutoRefresh() {
 		stopAutoRefresh();
@@ -848,17 +834,23 @@
 	onMount(() => {
 		projectId = window.location.pathname.split('/projects/')[1] || "";
 		loadProject();
+		// Links from global search: ?tab=queries&query=<text>
+		const params = new URLSearchParams(window.location.search);
+		if (params.get('query')) { filterText = params.get('query') || ""; showFilters = true; }
+		if (params.get('tab')) switchTab(params.get('tab') || "queries");
 	});
 
-	// Reload audit log when geo or suggestion mode filters change
+	// Reload audit log when geo or suggestion mode filters change. Only the filters are dependencies:
+	// loadAuditLog toggles auditLoading, and tracking it here re-ran the effect in an endless loop.
 	$effect(() => {
-		const _ = auditGeoFilter;
-		const __ = auditSuggestionMode;
-		if (activeTab === 'audit' && !auditLoading) {
-			auditPage = 1;
-			loadAuditLog();
-		}
-		return () => {};
+		auditGeoFilter;
+		auditSuggestionMode;
+		untrack(() => {
+			if (activeTab === 'audit') {
+				auditPage = 1;
+				loadAuditLog();
+			}
+		});
 	});
 
 
@@ -1120,14 +1112,15 @@
 							</div>
 							<button onclick={clearQueryFilters} class="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">&#8634; Сбросить</button>
 							</div>
-						{#if queries.length}
-							<div class="px-4 py-2 text-xs text-gray-500 bg-white border-b border-gray-200">
-								Показано {filteredQueries().length} из {queries.length} запросов
-								{#if filterText || filterPositionMin !== undefined || filterPositionMax !== undefined || filterFrequencyMin !== undefined}
-									<span class="ml-1 text-blue-600">(применены фильтры)</span>
-								{/if}
-							</div>
-						{/if}
+					{/if}
+					{#if queries.length && (showFilters || filtersActive)}
+						<div class="px-4 py-2 text-xs text-gray-500 bg-white border-b border-gray-200">
+							Показано {filteredQueries().length} из {queries.length} запросов
+							{#if filtersActive}
+								<span class="ml-1 text-blue-600">(применены фильтры)</span>
+								{#if !showFilters}<button onclick={clearQueryFilters} class="ml-2 text-blue-600 hover:underline">Сбросить</button>{/if}
+							{/if}
+						</div>
 					{/if}
 
 				<!-- Queries table -->
@@ -1158,12 +1151,16 @@
 												<div class="grid grid-cols-2 gap-3">
 													<div>
 														<label class="text-xs text-gray-500">Гео (JSON)</label>
-														<textarea bind:value={editingGeo} rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" />
+														<textarea bind:value={editingGeo} rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
 													</div>
 													<div>
 														<label class="text-xs text-gray-500">Кликов/день</label>
 														<input type="number" bind:value={editingDailyClicks} min="0" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
 													</div>
+												</div>
+												<div>
+													<label class="text-xs text-gray-500">URL страницы сайта (куда должен попасть клик)</label>
+													<input type="url" bind:value={editingUrl} placeholder="https://..." class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
 												</div>
 												<div>
 													<label class="text-xs text-gray-500">click_url</label>
@@ -1177,16 +1174,17 @@
 										</td>
 									{:else}
 										<td class="px-4 py-3 font-medium text-gray-900">{query.text}</td>
-										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px]"><a href={query.url} target="_blank" class="hover:underline">{query.url ? (query.url.length > 20 ? query.url.slice(0, 20) + '…' : query.url) : '—'}</a></td>
+										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px]">{#if query.url}<a href={safeHref(query.url)} target="_blank" rel="noopener noreferrer" class="hover:underline" title={query.url}>{query.url.length > 20 ? query.url.slice(0, 20) + '…' : query.url}</a>{:else}<span class="text-gray-400">—</span>{/if}</td>
 										<td class="px-4 py-3 text-gray-600 text-xs max-w-[150px] truncate" title={query.geo ? JSON.stringify(query.geo) : ''}>{query.geo && Object.keys(query.geo).length > 0 ? (typeof query.geo === 'string' ? query.geo : JSON.stringify(query.geo)) : '—'}</td>
 										<td class="px-4 py-3">
-											<div class="flex items-center gap-1 justify-end"><button onclick={(e) => { e.stopPropagation(); quickDecrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-red-50 hover:text-red-600 transition-colors font-bold">−</button><span class="text-sm font-medium tabular-nums w-12 text-center cursor-pointer hover:text-blue-600" title="Нажмите для редактирования">{query.daily_clicks}</span><button onclick={(e) => { e.stopPropagation(); quickIncrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-green-50 hover:text-green-600 transition-colors font-bold">+</button></div>
+											<div class="flex items-center gap-1 justify-end"><button onclick={(e) => { e.stopPropagation(); quickDecrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-red-50 hover:text-red-600 transition-colors font-bold">−</button><button type="button" onclick={() => startEdit(query)} class="text-sm font-medium tabular-nums w-12 text-center cursor-pointer hover:text-blue-600" title="Нажмите для редактирования">{query.daily_clicks}</button><button onclick={(e) => { e.stopPropagation(); quickIncrDaily(query.id, query.daily_clicks); }} class="w-6 h-6 flex items-center justify-center text-xs rounded bg-gray-100 hover:bg-green-50 hover:text-green-600 transition-colors font-bold">+</button></div>
 										</td>
-										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px] text-xs"><a href={query.click_url} target="_blank" class="hover:underline">{query.click_url ? (query.click_url.length > 20 ? query.click_url.slice(0, 20) + '…' : query.click_url) : '—'}</a></td>
+										<td class="px-4 py-3 text-blue-600 truncate max-w-[150px] text-xs">{#if query.click_url}<a href={safeHref(query.click_url)} target="_blank" rel="noopener noreferrer" class="hover:underline" title={query.click_url}>{query.click_url.length > 20 ? query.click_url.slice(0, 20) + '…' : query.click_url}</a>{:else}<span class="text-gray-400">—</span>{/if}</td>
 										<td class="px-4 py-3">
 											<span class="font-medium text-green-600">{query.completed.toLocaleString()}</span>
 										</td>
 										<td class="px-4 py-3 text-right">
+											<button onclick={() => startEdit(query)} class="text-gray-500 hover:text-blue-600 text-xs mr-2" title="Редактировать запрос">✎</button>
 											<button onclick={() => deleteQuery(query.id)} class="text-red-500 hover:text-red-700 text-xs" title="Удалить запрос">×</button>
 										</td>
 									{/if}
@@ -1216,7 +1214,7 @@
 					</div>
 				</div>
 
-				<div class="grid grid-cols-5 gap-4">
+				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
 					{#each ['pending', 'in_progress', 'completed', 'not_found', 'stuck'] as status}
 						<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm text-center">
 							<span class="inline-flex px-2 py-1 rounded-full text-xs font-medium {statusColors[status]}">{statusLabels[status]}</span>
@@ -1253,7 +1251,7 @@
 					{:else}
 						<div class="flex items-end gap-0.5 h-48 px-1">
 							{#each timelineData as point, i}
-								<div class="flex-1 flex flex-col items-center group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
+								<div class="flex-1 h-full flex flex-col items-center justify-end group relative cursor-pointer" onclick={() => openDailyDrillDown(point.date)}>
 									<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 pointer-events-none">
 										{new Date(point.date).toLocaleDateString("ru-RU")}: {point.count} кликов
 									</div>
@@ -1400,21 +1398,18 @@
 
 					<!-- Axis labels -->
 					{#if visibleTrendLines[0]?.data?.length > 0}
-						<text x={dims.marginL - 8} y={dims.marginT + 12} text-anchor="end" fill="#94a3b8" font-size="10">#{Math.max(1, Math.min(...visibleTrendLines[0].data.map((d: any) => d.position)) || 1)}</text>
-						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{20}</text>
+						<text x={dims.marginL - 8} y={dims.marginT + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{trendRange.minP}</text>
+						<text x={dims.marginL - 8} y={dims.marginT + dims.innerH + 4} text-anchor="end" fill="#94a3b8" font-size="10">#{trendRange.maxP}</text>
 
 						<!-- X-axis date labels -->
 							{#each xLabelIndices as i}
-								<text x={dims.marginL + (i / (visibleTrendLines[0].data.length - 1 || 1)) * dims.innerW} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(visibleTrendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
+								<text x={trendX(i, visibleTrendLines[0].data.length)} y={dims.marginT + dims.innerH + 24} text-anchor="middle" fill="#94a3b8" font-size="9">{new Date(visibleTrendLines[0].data[i].date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>
 							{/each}
 
-						<!-- Trend line names -->
-						{#each visibleTrendLines as line}
-							<text x={dims.marginL - 8} y={dims.marginT + 4 + visibleTrendLines.indexOf(line) * 12} text-anchor="end" fill={chartHoverQuery === line.text ? '#3b82f6' : '#64748b'} font-size="9" font-weight={chartHoverQuery === line.text ? '600' : '400'}>{line.text}</text>
+						<!-- One path per query -->
+						{#each visibleTrendLines as line (line.text)}
+							<path d={trendPath(line)} fill="none" stroke-width="2" stroke={trendColor(line.text)} opacity="0.85" />
 						{/each}
-
-						<!-- Paths -->
-						<path d="{buildChartPath(visibleTrendLines)}" fill="none" stroke-width="2" stroke="#3b82f6" opacity="0.6" />
 
 						<!-- Hover line and tooltip -->
 						{#if hoverDate && visibleTrendLines[0]?.data?.length > 0}
@@ -1433,7 +1428,7 @@
 					<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1">
 						{#each visibleTrendLines as line}
 							<span class="flex items-center gap-1.5 text-xs text-gray-600">
-								<span class="w-2 h-2 rounded-full bg-blue-500"></span>
+								<span class="w-2 h-2 rounded-full" style="background: {trendColor(line.text)}"></span>
 								<span class="truncate max-w-[120px]">{line.text}</span>
 							</span>
 						{/each}
@@ -1495,8 +1490,8 @@
 			<h3 class="text-sm font-medium text-gray-900 mb-3">Добавить делегата</h3>
 			<div class="flex flex-wrap gap-2 items-end">
 				<div>
-					<label class="block text-xs text-gray-500 mb-1">ID пользователя</label>
-					<input type="text" bind:value={newDelegateUserId} placeholder="uuid" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none w-72" />
+					<label class="block text-xs text-gray-500 mb-1">E-mail пользователя</label>
+					<input type="email" bind:value={newDelegateEmail} placeholder="colleague@example.com" class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-72" />
 				</div>
 				<div>
 					<label class="block text-xs text-gray-500 mb-1">Роль</label>
@@ -1517,7 +1512,7 @@
 					<table class="w-full text-sm">
 						<thead class="bg-gray-50 border-b border-gray-200">
 							<tr>
-								<th class="px-4 py-3 text-left font-medium text-gray-600">UserID</th>
+								<th class="px-4 py-3 text-left font-medium text-gray-600">Пользователь</th>
 								<th class="px-4 py-3 text-left font-medium text-gray-600">Роль</th>
 								<th class="px-4 py-3 text-right font-medium text-gray-600">Действия</th>
 							</tr>
@@ -1525,7 +1520,7 @@
 						<tbody>
 							{#each delegates as d}
 								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-									<td class="px-4 py-3 font-mono text-xs text-gray-700">{d.delegate_user_id}</td>
+									<td class="px-4 py-3 text-gray-700">{d.email || d.delegate_user_id}{#if d.display_name}<span class="text-gray-400"> · {d.display_name}</span>{/if}</td>
 									<td class="px-4 py-3">
 										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
 											d.role === 'edit' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -1577,7 +1572,7 @@
 							{#each markersData as marker}
 								<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
 									<td class="px-4 py-3 font-medium text-gray-900">{marker.name}</td>
-									<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={marker.url} target="_blank" class="hover:underline">{marker.url}</a></td>
+									<td class="px-4 py-3 text-blue-600 truncate max-w-[200px]"><a href={safeHref(marker.url)} target="_blank" rel="noopener noreferrer" class="hover:underline">{marker.url}</a></td>
 									<td class="px-4 py-3 text-gray-600 font-mono text-xs">{marker.css_selector || '—'}</td>
 									<td class="px-4 py-3">
 										<span class={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${marker.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
@@ -1973,9 +1968,9 @@
 		<button onclick={resetImport} class="text-gray-400 hover:text-gray-600">&times;</button>
 	</div>
 	<div class="p-4 space-y-4">
-		{#if !importLoading && importPreview.length > 0 && importCreated === 0}
+		{#if !importLoading && importPreview.length > 0 && !importDone}
 			<div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
-				Найдено {importPreview.length} строк для импорта. Формат: первый столбец = текст запроса, второй = URL целевой страницы.
+				Найдено {importRowCount} строк{importRowCount > importPreview.length ? ` (показаны первые ${importPreview.length})` : ""}. Колонки: text (или «Текст», иначе первая), url, click_url, daily_clicks, frequency, geo. Запросы, которые уже есть в проекте, пропускаются.
 			</div>
 			<div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
 				<table class="w-full text-xs">
@@ -1988,8 +1983,8 @@
 					<tbody>
 						{#each importPreview as row}
 						<tr class="border-t border-gray-100 hover:bg-gray-50">
-							<td class="px-3 py-2 text-gray-900 truncate max-w-[300px]">{row["text"] || row["Текст"]}</td>
-							<td class="px-3 py-2 text-gray-500 truncate max-w-[200px]">{row["url"]}</td>
+							<td class="px-3 py-2 text-gray-900 truncate max-w-[300px]">{row.text || "—"}</td>
+							<td class="px-3 py-2 text-gray-500 truncate max-w-[200px]">{row.url}</td>
 						</tr>
 						{/each}
 					</tbody>
@@ -2004,11 +1999,11 @@
 		{#if importLoading}
 			<div class="text-center py-8 text-gray-500">
 				<p class="font-medium">Импорт...</p>
-				<p class="text-xs text-gray-400 mt-1">Обработка {importPreview.length} строк</p>
+				<p class="text-xs text-gray-400 mt-1">Обработка {importRowCount} строк</p>
 			</div>
 		{/if}
 
-		{#if importCreated > 0}
+		{#if importDone}
 			<div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
 				<p class="font-medium">Импорт завершён</p>
 				<p class="text-xs mt-1">Создано: {importCreated} | Пропущено: {importSkipped}</p>
@@ -2038,7 +2033,7 @@
 		</div>
 		<div>
 			<label class="block text-sm font-medium text-gray-700 mb-1">Гео (JSON, опционально)</label>
-			<textarea bind:value={bulkEditGeoJson} rows="3" placeholder={`{\"country\": \"ru\"}`} class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
+			<textarea bind:value={bulkEditGeoJson} rows="3" placeholder={`{\"country\": \"ru\"}`} class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"></textarea>
 			<p class="text-xs text-gray-400 mt-1">Заменит geo у выбранных запросов (должен быть валидным JSON)</p>
 		</div>
 		<div>

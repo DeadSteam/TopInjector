@@ -8,6 +8,9 @@
 	let error = $state("");
 	let newName = $state("");
 	let newTokenName = $state("");
+	// A token belongs to one of the user's own projects (the external API acts on that project)
+	let tokenProjectId = $state("");
+	let ownProjects = $state<Array<{ id: string; name: string }>>([]);
 	let copiedToken = $state("");
 
 	// Messenger settings
@@ -39,11 +42,14 @@
 		total_users: 0, total_projects: 0, active_projects: 0, total_balance_credits: 0, queue_tasks: {}
 	});
 	let loadingAdmin = $state(true);
+	let isAdmin = $state(false);
 
 	async function loadSettings() {
 		try {
 			profile = await api.users.profile();
+			newName = profile.display_name || "";
 			apiTokens = await api.users.apiTokens();
+			ownProjects = (await api.projects.all()).filter((p: any) => !p.is_delegate);
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки";
 		} finally {
@@ -63,9 +69,14 @@
 
 	async function createToken() {
 		if (!newTokenName.trim()) return;
+		if (!tokenProjectId) {
+			error = "Выберите проект, к которому будет привязан токен";
+			return;
+		}
 		try {
-			const res = await api.users.createToken(newTokenName);
+			const res = await api.users.createToken(newTokenName, tokenProjectId);
 			apiTokens = [...apiTokens, res];
+			newTokenName = "";
 			copiedToken = res.token;
 			localStorage.setItem("external_token", res.token);
 		} catch (err) {
@@ -90,7 +101,7 @@
 		}
 	}
 
-	onMount(() => { loadSettings(); });
+	onMount(() => { loadSettings(); loadMessenger(); loadExternalServices(); });
 
 	async function loadMessenger() {
 		try {
@@ -142,6 +153,7 @@
 		try {
 			await api.users.changePassword({ current_password: currentPassword, new_password: newPassword });
 			passwordChanged = true;
+			error = "";
 			currentPassword = ""; newPassword = ""; confirmNewPassword = "";
 			setTimeout(() => { passwordChanged = false; }, 3000);
 		} catch (err) { error = err instanceof Error ? err.message : "Ошибка смены пароля"; }
@@ -169,10 +181,15 @@
 		try {
 			const stats = await api.projects.adminStats();
 			adminStats = stats;
+			isAdmin = true;
 		} catch {} finally { loadingAdmin = false; }
 	}
 
-	onMount(() => { loadStopWords(); loadAdminStats(); });
+	onMount(async () => {
+		loadStopWords();
+		const me = await api.users.profile().catch(() => null);
+		if (me?.is_admin) loadAdminStats(); else loadingAdmin = false;
+	});
 </script>
 
 <div class="p-6">
@@ -185,7 +202,7 @@
 	{#if loading}
 		<div class="text-center py-12 text-gray-400">Загрузка...</div>
 	{:else if profile}
-		<div class="grid grid-cols-2 gap-6">
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			<!-- Profile settings -->
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">Профиль</h2>
@@ -200,45 +217,45 @@
 					</div>
 					<button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Сохранить</button>
 				</form>
+
+				<!-- Avatar Section -->
+				<div class="border-t border-gray-200 pt-6 mt-6">
+					<h2 class="text-lg font-semibold text-gray-900 mb-4">Аватар профиля</h2>
+					{#if profile && profile.avatar_url}
+						<div class="flex items-center gap-4">
+							<img src={profile.avatar_url} alt="Avatar" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200" />
+							<div>
+								<p class="text-sm text-gray-600">Аватар загружен</p>
+								<button
+									onclick={async () => {
+										try { await api.users.deleteAvatar(); profile.avatar_url = null; } catch(e) { console.error("Delete avatar failed:", e); }
+									}}
+									class="mt-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg transition-colors">
+									Удалить аватар
+								</button>
+							</div>
+						</div>
+					{:else}
+						<p class="text-sm text-gray-500 mb-3">У вас нет аватара. Укажите URL изображения для загрузки.</p>
+						<div class="flex gap-2 items-end">
+							<input type="url" bind:value={avatarUrl} placeholder="https://example.com/avatar.jpg"
+								class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+							<button
+								onclick={async () => {
+									if (!avatarUrl.trim()) return;
+									try { await api.users.uploadAvatar({ avatar_url: avatarUrl }); profile.avatar_url = avatarUrl; avatarUrl = ""; }
+									catch(e) { console.error("Upload avatar failed:", e); }
+								}}
+								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors">
+								Загрузить
+							</button>
+						</div>
+					{/if}
+				</div>
 			</div>
 
 			<!-- Messenger integration -->
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-
-			<!-- Avatar Section -->
-			<div class="border-t border-gray-200 pt-6 mt-6">
-				<h2 class="text-lg font-semibold text-gray-900 mb-4">Аватар профиля</h2>
-				{#if profile && profile.avatar_url}
-					<div class="flex items-center gap-4">
-						<img src={profile.avatar_url} alt="Avatar" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200" />
-						<div>
-							<p class="text-sm text-gray-600">Аватар загружен</p>
-							<button
-								onclick={async () => {
-									try { await api.users.deleteAvatar(); profile.avatar_url = null; } catch(e) { console.error("Delete avatar failed:", e); }
-								}}
-								class="mt-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg transition-colors">
-								Удалить аватар
-							</button>
-						</div>
-					</div>
-				{:else}
-					<p class="text-sm text-gray-500 mb-3">У вас нет аватара. Укажите URL изображения для загрузки.</p>
-					<div class="flex gap-2 items-end">
-						<input type="url" bind:value={avatarUrl} placeholder="https://example.com/avatar.jpg"
-							class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-						<button
-							onclick={async () => {
-								if (!avatarUrl.trim()) return;
-								try { await api.users.uploadAvatar({ avatar_url: avatarUrl }); profile.avatar_url = avatarUrl; avatarUrl = ""; }
-								catch(e) { console.error("Upload avatar failed:", e); }
-							}}
-							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors">
-							Загрузить
-						</button>
-					</div>
-				{/if}
-			</div>
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">Мессенджеры</h2>
 				{#if messengerSaved}
 					<div class="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">Сохранено</div>
@@ -332,6 +349,12 @@
 
 				<form onsubmit={(e) => { e.preventDefault(); createToken(); }} class="flex gap-2 mb-4">
 					<input type="text" bind:value={newTokenName} placeholder="Название токена" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+					<select bind:value={tokenProjectId} class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+						<option value="">Проект…</option>
+						{#each ownProjects as p (p.id)}
+							<option value={p.id}>{p.name}</option>
+						{/each}
+					</select>
 				 <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Создать</button>
 				</form>
 
@@ -340,13 +363,16 @@
 						{#each apiTokens as token}
 							<div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
 								<div>
-									<p class="text-sm font-medium">{token.name}</p>
+									<p class="text-sm font-medium">{token.name}{#if token.project_name}<span class="text-gray-500 font-normal"> · {token.project_name}</span>{/if}</p>
 									<p class="text-xs font-mono text-gray-500">{token.token || token.id}</p>
 								</div>
 								<div class="flex gap-2">
-									<button onclick={() => copyToken(token.token || token.id)} class="px-3 py-1 border border-gray-300 rounded-lg text-xs hover:bg-gray-100 transition-colors">
-										{copiedToken === (token.token || token.id) ? 'Скопировано!' : 'Копировать'}
-									</button>
+									{#if token.token && !token.token.endsWith('...')}
+										<!-- the full token is only known right after creation; the list shows it masked -->
+										<button onclick={() => copyToken(token.token)} class="px-3 py-1 border border-gray-300 rounded-lg text-xs hover:bg-gray-100 transition-colors">
+											{copiedToken === token.token ? 'Скопировано!' : 'Копировать'}
+										</button>
+									{/if}
 									<button onclick={() => deleteUserToken(token.id, token.token || token.id)} class="px-3 py-1 border border-red-300 text-red-600 rounded-lg text-xs hover:bg-red-50 transition-colors">Удалить</button>
 								</div>
 							</div>
@@ -355,25 +381,21 @@
 				{/if}
 			</div>
 
-			<!-- Plan -->
+			<!-- Balance summary (balances are kept per project) -->
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-				<h2 class="text-lg font-semibold text-gray-900 mb-4">Тарифный план</h2>
+				<h2 class="text-lg font-semibold text-gray-900 mb-4">Баланс и проекты</h2>
 				<div class="space-y-3">
 					<div class="flex justify-between items-center">
-						<span class="text-sm text-gray-600">Текущий план</span>
-						<span class="font-medium text-gray-900">{profile.plan || "free"}</span>
+						<span class="text-sm text-gray-600">Мои проекты</span>
+						<span class="font-medium text-gray-900">{ownProjects.length}</span>
 					</div>
 					<div class="flex justify-between items-center">
-						<span class="text-sm text-gray-600">Кликов/день</span>
-						<span class="font-medium text-gray-900">{profile.daily_limit || 150}</span>
+						<span class="text-sm text-gray-600">Баланс по всем проектам</span>
+						<span class="font-medium text-green-600">{profile.balance} ₽</span>
 					</div>
-					<div class="flex justify-between items-center">
-						<span class="text-sm text-gray-600">Баланс</span>
-						<span class="font-medium text-green-600">{profile.balance || 0} ₽</span>
-					</div>
-					<button class="w-full mt-2 px-4 py-2 border border-blue-600 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors">
-						Изменить план
-					</button>
+					<a href="/balance" class="block w-full mt-2 px-4 py-2 border border-blue-600 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium text-center transition-colors">
+						Пополнить баланс проекта
+					</a>
 				</div>
 			</div>
 
@@ -401,7 +423,8 @@
 				{/if}
 			</div>
 
-			<!-- Admin panel -->
+			<!-- Admin panel (only for ADMIN_EMAILS; the API answers 403 to everyone else) -->
+			{#if isAdmin}
 			<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
 				<h2 class="text-lg font-semibold text-gray-900 mb-4">Админ-панель</h2>
 				{#if loadingAdmin}
@@ -441,6 +464,7 @@
 					</div>
 				{/if}
 			</div>
+			{/if}
 		</div>
 	{/if}
 </div>

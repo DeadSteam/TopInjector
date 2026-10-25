@@ -29,6 +29,36 @@ async function _refresh(): Promise<string> {
 	return data.access_token;
 }
 
+/**
+ * Return `url` only if it is a safe http(s) or relative link; otherwise "#".
+ * Defence-in-depth against javascript:/data: URLs that could run when a stored value
+ * is rendered into an href (the backend also rejects these on input).
+ */
+export function safeHref(url: string | null | undefined): string {
+	if (!url) return "#";
+	const trimmed = url.trim();
+	// Relative links are fine; an absolute URL must be http(s).
+	if (/^(https?:)?\/\//i.test(trimmed) || /^\/(?!\/)/.test(trimmed)) return trimmed;
+	if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return "#"; // some other scheme (javascript:, data:, …)
+	return trimmed;
+}
+
+/** GET a file with the user's token and save it under the server's file name (or ``fallback``). */
+export async function downloadFile(path: string, fallback: string): Promise<void> {
+	const res = await fetch(`${BASE_URL}${path}`, { headers: headers(localStorage.getItem("token") || "") });
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || res.statusText);
+	}
+	const match = (res.headers.get("content-disposition") || "").match(/filename\*=UTF-8''([^;]+)/);
+	const url = URL.createObjectURL(await res.blob());
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = match ? decodeURIComponent(match[1]) : fallback;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
 async function fetcher(path: string, options?: RequestInit): Promise<any> {
 	// Auto-refresh token on 401 before calling this
 	let token = localStorage.getItem("token") || "";
@@ -68,6 +98,15 @@ async function fetcher(path: string, options?: RequestInit): Promise<any> {
 	return res.json();
 }
 
+function analyticsPath(base: string, projectId?: string, suggestionMode?: string, positionThreshold?: number): string {
+	const qs = new URLSearchParams();
+	if (projectId) qs.set("project_id", projectId);
+	if (suggestionMode) qs.set("suggestion_mode", suggestionMode);
+	if (positionThreshold !== undefined && positionThreshold > 0) qs.set("position_threshold", String(positionThreshold));
+	const q = qs.toString();
+	return q ? `${base}?${q}` : base;
+}
+
 export const api = {
 	auth: {
 		login: (email: string, password: string) =>
@@ -93,7 +132,16 @@ export const api = {
 		},
 	},
 	projects: {
-		list: (params?: { search?: string; group_id?: string; region?: string; strategy_type?: string; is_active?: boolean; only_delegated?: string; delegated_by?: string; page?: number; page_size?: number }) => {
+		/** Every project the user can see, walking all pages — for selectors and totals. */
+		all: async (): Promise<any[]> => {
+			const items: any[] = [];
+			for (let page = 1; ; page++) {
+				const resp = await fetcher(`/api/projects/?page=${page}&page_size=100`);
+				items.push(...(resp.items ?? []));
+				if (!resp.items?.length || items.length >= resp.total) return items;
+			}
+		},
+		list: (params?: { search?: string; group_id?: string; region?: string; strategy_type?: string; is_active?: boolean; only_delegated?: string; delegated_by?: string; integration_type?: string; page?: number; page_size?: number }) => {
 			let path = "/api/projects/";
 			if (params) {
 				const qs = new URLSearchParams();
@@ -104,6 +152,7 @@ export const api = {
 				if (params.is_active !== undefined) qs.set("is_active", String(params.is_active));
 				if (params.only_delegated) qs.set("only_delegated", params.only_delegated);
 				if (params.delegated_by) qs.set("delegated_by", params.delegated_by);
+				if (params.integration_type) qs.set("integration_type", params.integration_type);
 				if (params.page) qs.set("page", String(params.page));
 				if (params.page_size) qs.set("page_size", String(params.page_size));
 				path += "?" + qs.toString();
@@ -135,11 +184,12 @@ export const api = {
 			fetcher(`/api/projects/${projectId}/queries/${queryId}`, {
 				method: "DELETE",
 			}),
-		importQueries: (projectId: string, csvText: string) =>
+		/** The file is sent as-is: the server detects the encoding (UTF-8 / Windows-1251) and separator. */
+		importQueries: (projectId: string, csv: Blob | string) =>
 			fetcher(`/api/projects/${projectId}/queries/import`, {
 				method: "POST",
 				headers: { "Content-Type": "text/csv" },
-				body: csvText,
+				body: csv,
 			}),
 		boost: (projectId: string, data: any) =>
 			fetcher(`/api/projects/${projectId}/boost`, {
@@ -216,7 +266,7 @@ export const api = {
 			fetcher("/api/projects/bulk-edit", { method: "POST", body: JSON.stringify(data) }),
 		bulkDelete: (data: { project_ids: string[] }) =>
 			fetcher("/api/projects/bulk-delete", { method: "POST", body: JSON.stringify(data) }),
-		bulkDelegate: (data: { project_ids: string[]; delegate_user_id: string; role: string }) =>
+		bulkDelegate: (data: { project_ids: string[]; email: string; role: string }) =>
 			fetcher("/api/projects/bulk-delegate", { method: "POST", body: JSON.stringify(data) }),
 		reportAnalytics: (projectId: string, params?: { from_date?: string; to_date?: string }) => {
 			let path = `/api/projects/${projectId}/reports/analytics.csv`;
@@ -282,14 +332,15 @@ export const api = {
 			fetcher(`/api/projects/groups/${id}`, { method: "DELETE" }),
 	},
 	queue: {
-		list: (project?: string, status?: string, fromDate?: string, toDate?: string, integration?: string) => {
-			let path = "/api/queue/?";
-			if (project) path += `project_id=${project}&`;
-			if (status) path += `status=${status}&`;
-			if (fromDate) path += `from_date=${encodeURIComponent(fromDate)}&`;
-			if (toDate) path += `to_date=${encodeURIComponent(toDate)}`;
-			if (integration) path += `integration=${encodeURIComponent(integration)}`;
-			return fetcher(path);
+		list: (project?: string, status?: string, fromDate?: string, toDate?: string, integration?: string, limit?: number) => {
+			const qs = new URLSearchParams();
+			if (project) qs.set("project_id", project);
+			if (status) qs.set("status", status);
+			if (limit) qs.set("limit", String(limit));
+			if (fromDate) qs.set("from_date", fromDate);
+			if (toDate) qs.set("to_date", toDate);
+			if (integration) qs.set("integration", integration);
+			return fetcher(`/api/queue/?${qs}`);
 		},
 		push: (data: any) =>
 			fetcher("/api/queue/push", { method: "POST", body: JSON.stringify(data) }),
@@ -309,53 +360,40 @@ export const api = {
 			if (params.toString()) url += "?" + params.toString();
 			return new EventSource(url);
 		},
-		stats: (projectId?: string, integration?: string) => {
-			let path = "/api/queue/stats";
-			if (projectId) path += `?project_id=${projectId}`;
-			if (integration) path += `${projectId ? '&' : '?'}integration=${encodeURIComponent(integration)}`;
-			return fetcher(path);
+		stats: (projectId?: string, integration?: string, fromDate?: string, toDate?: string) => {
+			const qs = new URLSearchParams();
+			if (projectId) qs.set("project_id", projectId);
+			if (integration) qs.set("integration", integration);
+			if (fromDate) qs.set("from_date", fromDate);
+			if (toDate) qs.set("to_date", toDate);
+			return fetcher(`/api/queue/stats?${qs}`);
 		},
 		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),
 		dashboardServers: () => fetcher("/api/queue/dashboard-servers"),
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),
-		clicks: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
-			let path = "/api/analytics/clicks";
-			if (projectId) path += `&project_id=${projectId}`;
-			if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
-			if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
-			return fetcher(path);
-		},
-		summary: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
-			let path = "/api/analytics/summary";
-			if (projectId) path += `&project_id=${projectId}`;
-			if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
-			if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
-			return fetcher(path);
-		},
+		clicks: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
+			fetcher(analyticsPath("/api/analytics/clicks", projectId, suggestionMode, positionThreshold)),
+		summary: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
+			fetcher(analyticsPath("/api/analytics/summary", projectId, suggestionMode, positionThreshold)),
 		trackingPositions: (projectId?: string) => {
 		let path = "/api/analytics/tracking/positions";
 		if (projectId) path += `?project_id=${projectId}`;
 		return fetcher(path);
 	},
-	topRanges: (projectId?: string, suggestionMode?: string, positionThreshold?: number) => {
-		let path = "/api/analytics/top-ranges";
-		if (projectId) path += `?project_id=${projectId}`;
-		if (suggestionMode) path += `&suggestion_mode=${encodeURIComponent(suggestionMode)}`;
-		if (positionThreshold !== undefined && positionThreshold > 0) path += `&position_threshold=${positionThreshold}`;
-		return fetcher(path);
-	},
+	topRanges: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
+		fetcher(analyticsPath("/api/analytics/top-ranges", projectId, suggestionMode, positionThreshold)),
 	},
 	users: {
 		profile: () => fetcher("/api/users/profile"),
 		updateProfile: (data: any) =>
 			fetcher("/api/users/profile", { method: "PUT", body: JSON.stringify(data) }),
 		apiTokens: () => fetcher("/api/users/api-tokens"),
-		createToken: (name: string) =>
+		createToken: (name: string, projectId: string) =>
 			fetcher("/api/users/api-tokens", {
 				method: "POST",
-				body: JSON.stringify({ name }),
+				body: JSON.stringify({ name, project_id: projectId }),
 			}),
 		deleteToken: (id: string) =>
 			fetcher(`/api/users/api-tokens/${id}`, { method: "DELETE" }),
@@ -390,5 +428,29 @@ export const api = {
 	external: {
 		getToken: () => localStorage.getItem("external_token") || "",
 		header: () => ({ "X-Auth-Token": api.external.getToken() }),
+	},
+	plans: {
+		list: () => fetcher("/api/plans"),
+		status: () => fetcher("/api/plan/status"),
+		switch: (slug: string) =>
+			fetcher("/api/plan", { method: "PUT", body: JSON.stringify({ slug }) }),
+	},
+	externalServices: {
+		list: () => fetcher("/api/external-services"),
+		create: (data: { service_type: string; display_name: string; config_json?: Record<string, unknown> }) =>
+			fetcher("/api/external-services", { method: "POST", body: JSON.stringify(data) }),
+		update: (id: string, data: Record<string, unknown>) =>
+			fetcher(`/api/external-services/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+		delete: (id: string) =>
+			fetcher(`/api/external-services/${id}`, { method: "DELETE" }),
+		domains: (id: string) => fetcher(`/api/external-services/${id}/domains`),
+		addDomain: (id: string, domain: string) =>
+			fetcher(`/api/external-services/${id}/domains`, { method: "POST", body: JSON.stringify({ domain }) }),
+	},
+	whitelabel: {
+		get: () => fetcher("/api/whitelabel"),
+		update: (data: Record<string, unknown>) =>
+			fetcher("/api/whitelabel", { method: "PUT", body: JSON.stringify(data) }),
+		checkDns: () => fetcher("/api/whitelabel/check-dns", { method: "POST" }),
 	},
 };

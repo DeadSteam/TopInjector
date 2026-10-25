@@ -1,0 +1,7 @@
+node_modules
+build
+.svelte-kit
+test-results
+*.png
+check*.mjs
+DsjTZ_debug.js

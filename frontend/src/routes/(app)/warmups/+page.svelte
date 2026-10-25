@@ -22,8 +22,7 @@
 
 	async function loadProjects() {
 		try {
-			const data: any = await api.projects.list();
-			projects = data.projects || [];
+			projects = await api.projects.all();
 		} catch {}
 	}
 
@@ -66,7 +65,7 @@
 </script>
 
 <div class="p-6">
-	<div class="flex items-center justify-between mb-6">
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
 		<h1 class="text-2xl font-bold text-gray-900">Разогрев (Warmups)</h1>
 		<button onclick={() => showCreateModal = true} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">+ Создать кампанию</button>
 	</div>

@@ -80,7 +80,7 @@
 </script>
 
 <div class="p-6">
-	<div class="flex items-center justify-between mb-6">
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
 		<h1 class="text-2xl font-bold text-gray-900">Уведомления</h1>
 		{#if notifications.some(n => !n.is_read)}
 			<button onclick={markAllReadAction} disabled={markingAllRead} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors">

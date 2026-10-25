@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { api } from "$lib/api";
-	import { onMount, onDestroy } from 'svelte';
+	import { api, downloadFile } from "$lib/api";
+	import { onMount, onDestroy, untrack } from 'svelte';
 
 	interface TimelinePoint {
 		date: string;
@@ -36,24 +36,35 @@
 	// Active TOP range filter for interactive buttons
 	let activeTopRange = $state<string>('all');
 
-	// TOP range metrics: % per range, delta vs previous period
+	// TOP range metrics: % per range (cards) and cumulative % for "TOP N" (buttons)
 	let topRangePcts = $state<number[]>([]);
-	let topRangeDelta = $state<number[]>([]); // delta percentage points vs previous period
-	let showNoPositions = $state(false); // toggle to show tasks without positions
+	let showNoPositions = $state(false); // show clicks the agent reported without a position
 
-	const topRangeLabels = ['1–3 (Топ-3)', '4–5', '6–10', '11–20', '21–50', '>50'];
+	// Worst position in each range returned by /analytics/top-ranges
+	const RANGE_MAX: Record<string, number> = { '1–3 (Топ-3)': 3, '4–5': 5, '6–10': 10, '11–20': 20, '21–50': 50, '>50': Infinity };
 
 	function updateTopRangeMetrics() {
-		if (!topRangesData?.ranges || !topRangesData.total_clicks) {
-			topRangePcts = [];
-			topRangeDelta = [];
-			return;
-		}
-		const total = topRangesData.total_clicks;
-		topRangePcts = topRangesData.ranges.map((r: any) => {
-			if (!total || total === 0) return 0;
-			return Number(((r.clicks / total) * 100).toFixed(1));
-		});
+		const total = topRangesData?.total_clicks;
+		topRangePcts = total ? topRangesData.ranges.map((r: any) => Number(((r.clicks / total) * 100).toFixed(1))) : [];
+	}
+
+	function topLimit(value: string): number {
+		return value === 'all' ? Infinity : Number(value.split('-')[1]);
+	}
+
+	function rangeInTop(range: any): boolean {
+		return (RANGE_MAX[range.label] ?? Infinity) <= topLimit(activeTopRange);
+	}
+
+	function topClicks(value: string): number {
+		const limit = topLimit(value);
+		return (topRangesData?.ranges ?? []).filter((r: any) => (RANGE_MAX[r.label] ?? Infinity) <= limit)
+			.reduce((sum: number, r: any) => sum + r.clicks, 0);
+	}
+
+	function topPct(value: string): number {
+		const total = topRangesData?.total_clicks;
+		return total ? Number(((topClicks(value) / total) * 100).toFixed(1)) : 0;
 	}
 
 	// Project selector for scoped analytics
@@ -64,6 +75,7 @@
 	// Inline daily_limit edit from analytics
 	let showDailyLimitModal = $state(false);
 	let editingProjectName = $state("");
+	let currentDailyLimit = $state(0);
 	let newDailyLimit = $state(0);
 	let dailyLimitSaving = $state(false);
 	let dailyLimitSaved = $state(false);
@@ -78,6 +90,7 @@
 
 	function openEditDailyLimit(project: any) {
 		editingProjectName = project.name;
+		currentDailyLimit = project.daily_limit;
 		newDailyLimit = project.daily_limit || 500;
 		showDailyLimitModal = true;
 	}
@@ -107,7 +120,7 @@
 
 	async function loadProjects() {
 		try {
-			projects = await api.projects.list();
+			projects = await api.projects.all();
 		} catch {
 			projects = [];
 		} finally {
@@ -180,8 +193,7 @@
 	}
 
 	onMount(async () => {
-		await loadProjects();
-		await Promise.all([loadSummary(), loadTimeline(), loadTracking(), loadTopRanges()]);
+		await loadProjects();  // the filter $effect below does the first loadAll()
 
 		refreshInterval = window.setInterval(() => {
 			loadAll();
@@ -193,13 +205,12 @@
 	});
 
 	// Reload analytics when suggestion_mode or position_threshold filter changes
+	// Reload when the filters change. Only the filters are dependencies: loadAll toggles the
+	// loading flags, and tracking them here re-ran the effect in an endless loop.
 	$effect(() => {
-		const _ = filterSuggestionMode; // trigger on change
-		const __ = filterPositionThreshold; // trigger on threshold change
-		if (!projectLoading && !summaryLoading) {
-			loadAll();
-		}
-		return () => {};
+		filterSuggestionMode;
+		filterPositionThreshold;
+		untrack(() => loadAll());
 	});
 
 	function handleProjectChange(e: Event) {
@@ -209,9 +220,9 @@
 	}
 
 	// Max count for scaling timeline chart
-	const maxTimelineCount = timelineData.length > 0
+	const maxTimelineCount = $derived(timelineData.length > 0
 		? Math.max(...timelineData.map(d => d.count))
-		: 1;
+		: 1);
 
 	// Position colors helper
 	function positionClass(pos: number): string {
@@ -242,12 +253,6 @@
 		{ label: 'TOP 20', value: '0-20' },
 		{ label: 'TOP 50', value: '0-50' },
 	];
-
-	// Compute percentage for a single range out of total clicks
-	function topRangePct(range: any): number {
-		if (!range || !topRangesData?.total_clicks || topRangesData.total_clicks === 0) return 0;
-		return (range.clicks / topRangesData.total_clicks) * 100;
-	}
 
 	// Format date for display
 	function formatDate(dateStr: string): string {
@@ -314,25 +319,14 @@
 	// Download report helpers
 	async function downloadReport(type: string) {
 		if (!selectedProject) return;
+		const qs = new URLSearchParams();
+		// Project service report endpoints expect 'from_date'/'to_date' (not 'start_date'/'end_date')
+		if (reportFromDate) qs.set("from_date", reportFromDate);
+		if (reportToDate) qs.set("to_date", reportToDate);
 		try {
-			const fn = type === 'analytics' ? api.projects.reportAnalytics : api.projects.reportSummary;
-			const url = "/api/projects/" + encodeURIComponent(selectedProject) + "/reports/" + type + ".csv";
-			let fetchUrl = url;
-			if (reportFromDate || reportToDate) {
-				fetchUrl += "?";
-				// Project service report endpoints expect 'from_date'/'to_date' (not 'start_date'/'end_date')
-				if (reportFromDate) fetchUrl += "from_date=" + encodeURIComponent(reportFromDate) + "&";
-				if (reportToDate) fetchUrl += "to_date=" + encodeURIComponent(reportToDate);
-			}
-			const blob = await fetch(fetchUrl).then(r => r.blob());
-			const blobUrl = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = blobUrl;
-			a.download = `report_${type}_${Date.now()}.csv`;
-			a.click();
-			URL.revokeObjectURL(blobUrl);
+			await downloadFile(`/api/projects/${encodeURIComponent(selectedProject)}/reports/${type}.csv?${qs}`, `report_${type}.csv`);
 		} catch (e) {
-			console.error("Export failed:", e);
+			summaryError = e instanceof Error ? e.message : "Ошибка выгрузки отчёта";
 		}
 	}
 
@@ -365,7 +359,7 @@
 
 <div class="p-6">
 	<!-- Header -->
-	<div class="mb-6 flex items-center justify-between">
+	<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
 		<div>
 			<h1 class="text-2xl font-bold text-gray-900">Аналитика</h1>
 			<p class="text-sm text-gray-500 mt-1">Статистика кликов, позиций и эффективности проектов</p>
@@ -389,7 +383,7 @@
 	{/if}
 
 	<!-- Stats cards -->
-	<div class="grid grid-cols-4 gap-6 mb-8">
+	<div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
 		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
 			<p class="text-sm text-gray-500">Всего кликов</p>
 			<p class="text-3xl font-bold text-gray-900 mt-1">{stats?.total_clicks?.toLocaleString() ?? '—'}</p>
@@ -406,7 +400,7 @@
 		</div>
 		<div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm relative group">
 			<p class="text-sm text-gray-500">Активных проектов</p>
-			<p class="text-3xl font-bold text-gray-900 mt-1">{projects.length}</p>
+			<p class="text-3xl font-bold text-gray-900 mt-1">{projects.filter(p => p.is_active).length}</p>
 			{#if selectedProject}
 				<button onclick={() => { const p = projects.find(x => x.id === selectedProject); if (p) openEditDailyLimit(p); }} class="absolute top-4 right-4 text-xs text-blue-600 hover:text-blue-800 opacity-0 group-hover:opacity-100 transition-opacity" title="Редактировать лимит кликов">
 					✏️ Лимит
@@ -429,7 +423,7 @@
 			<!-- Bar chart using CSS -->
 			<div class="flex items-end gap-1 h-64 px-2">
 				{#each timelineData as point, i}
-					<div class="flex-1 flex flex-col items-center justify-end group relative">
+					<div class="flex-1 h-full flex flex-col items-center justify-end group relative">
 						<!-- Tooltip -->
 						<div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
 							{formatDate(point.date)}: {point.count} кликов
@@ -457,13 +451,13 @@
 		<!-- TOP range toggle buttons with % and "Без позиций" toggle -->
 		{#if topRangesData && topRangesData.ranges.length > 0}
 		<div class="flex gap-2 mb-3 flex-wrap items-center">
-			{#each topRangeButtons as btn, btnIdx}
+			{#each topRangeButtons as btn}
 				<button
 					onclick={() => refreshTopRangeFilter(btn)}
 					class={`px-3 py-1.5 text-sm rounded-lg transition-colors ${activeTopRange === btn.value ? 'bg-blue-600 text-white' : 'border border-gray-300 hover:bg-gray-50'}`}>
 					{btn.label}
-					{#if btn.value !== 'all' && topRangePcts[btnIdx] > 0}
-						<span class="ml-1 text-xs opacity-80">{topRangePcts[btnIdx]}%</span>
+					{#if btn.value !== 'all'}
+						<span class="ml-1 text-xs opacity-80">{topPct(btn.value)}%</span>
 					{/if}
 				</button>
 			{/each}
@@ -472,6 +466,16 @@
 				Без позиций
 			</button>
 		</div>
+		{#if activeTopRange !== 'all'}
+			<p class="text-sm text-gray-600 mb-3">
+				В {topRangeButtons.find(b => b.value === activeTopRange)?.label}: <span class="font-semibold">{topClicks(activeTopRange)}</span> кликов из {topRangesData.total_clicks} с позицией ({topPct(activeTopRange)}%)
+			</p>
+		{/if}
+		{#if showNoPositions}
+			<p class="text-sm text-gray-600 mb-3">
+				Без позиции (агент не сообщил позицию): <span class="font-semibold">{topRangesData.no_position_clicks ?? 0}</span> кликов — они не входят в проценты выше
+			</p>
+		{/if}
 		{/if}
 
 		{#if topRangesLoading}
@@ -480,7 +484,7 @@
 			<!-- Per-range stats with % -->
 			<div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
 				{#each topRangesData.ranges as range, idx}
-					<div class="bg-gray-50 rounded-lg p-3 text-center border border-gray-100 hover:border-blue-200 transition-colors">
+					<div class="bg-gray-50 rounded-lg p-3 text-center border transition-opacity {activeTopRange !== 'all' && rangeInTop(range) ? 'border-blue-400' : 'border-gray-100'} {rangeInTop(range) ? '' : 'opacity-40'}">
 						<p class="text-xs text-gray-500 mb-1 truncate">{range.label}</p>
 						<p class="text-xl font-bold text-gray-900">{range.clicks}</p>
 						<p class={`text-xs font-medium mt-1 ${topRangePcts[idx] > 20 ? 'text-green-600' : topRangePcts[idx] > 10 ? 'text-blue-600' : 'text-gray-500'}`}>
@@ -495,7 +499,7 @@
 			<!-- Horizontal bar chart -->
 			<div class="space-y-2">
 				{#each topRangesData.ranges as range}
-					<div class="flex items-center gap-3">
+					<div class="flex items-center gap-3 transition-opacity {rangeInTop(range) ? '' : 'opacity-40'}">
 						<span class="text-xs text-gray-500 w-24 text-right shrink-0">{range.label}</span>
 						<div class="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden relative">
 							<div
@@ -613,27 +617,31 @@
 					<button onclick={() => { reportFromDate = ""; reportToDate = ""; }} class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">Очистить</button>
 				{/if}
 			</div>
+			<div class="flex gap-3 flex-wrap mt-4">
+				<button
+					class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+					onclick={async () => { downloadReport('analytics'); }}>
+					Аналитика по запросам (CSV)
+				</button>
+				<button
+					class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+					onclick={async () => { downloadReport('summary'); }}>
+					Сводный отчёт (CSV)
+				</button>
+				<button
+					class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+					onclick={async () => { downloadTimelineReport(); }}>
+					График кликов (CSV)
+				</button>
+			</div>
+		</div>
+	{:else}
+		<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6 text-sm text-gray-500">
+			<h3 class="font-medium text-gray-900 mb-2">Экспорт отчёта</h3>
+			Выберите проект вверху страницы, чтобы выгрузить отчёты в CSV.
 		</div>
 	{/if}
 
-	<!-- Export buttons -->
-	<div class="flex gap-3 flex-wrap">
-		<button
-			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-			onclick={async () => { downloadReport('analytics'); }}>
-			Аналитика по запросам (CSV)
-		</button>
-		<button
-			class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
-			onclick={async () => { downloadReport('summary'); }}>
-			Сводный отчёт (CSV)
-		</button>
-		<button
-			class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
-			onclick={async () => { downloadTimelineReport(); }}>
-			График кликов (CSV)
-		</button>
-	</div>
 
 	<!-- Suggestion mode + position filter -->
 	<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
@@ -683,7 +691,7 @@
 				<div class="space-y-4">
 					<div class="p-3 bg-gray-50 rounded-lg">
 						<p class="text-sm font-medium text-gray-900">{editingProjectName}</p>
-						<p class="text-xs text-gray-500 mt-1">Текущий лимит: <span class="font-bold">{newDailyLimit} кликов/день</span></p>
+						<p class="text-xs text-gray-500 mt-1">Текущий лимит: <span class="font-bold">{currentDailyLimit} кликов/день</span></p>
 					</div>
 
 					<div>

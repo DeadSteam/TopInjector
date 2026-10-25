@@ -30,8 +30,7 @@
 
 	async function loadProjects() {
 		try {
-			const data = await api.projects.list();
-			projects = data.items || [];
+			projects = await api.projects.all();
 			if (projects.length > 0) {
 				selectedProjectId = projects[0].id;
 				loadProjectBalance(selectedProjectId);
@@ -123,7 +122,7 @@
 	{:else}
 
 	<!-- Summary cards -->
-	<div class="grid grid-cols-3 gap-4 mb-6">
+	<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
 		<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
 			<p class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Общий баланс</p>
 			<p class="text-2xl font-bold text-green-600">{totalBalance.toFixed(2)} ₽</p>
