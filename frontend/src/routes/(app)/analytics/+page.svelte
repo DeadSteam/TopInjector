@@ -80,7 +80,9 @@
 	let dailyLimitSaving = $state(false);
 	let dailyLimitSaved = $state(false);
 
-	// Date range for report export
+	// Date range for analytics filtering (also used for report export)
+	let filterFromDate = $state("");
+	let filterToDate = $state("");
 	let reportFromDate = $state("");
 	let reportToDate = $state("");
 
@@ -130,18 +132,18 @@
 
 	async function loadSummary() {
 		if (selectedProject) {
-			stats = await api.analytics.summary(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
+			stats = await api.analytics.summary(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined, reportFromDate, reportToDate);
 		} else {
-			stats = await api.analytics.summary(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
+			stats = await api.analytics.summary(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined, reportFromDate, reportToDate);
 		}
 	}
 
 	async function loadTimeline() {
 		if (selectedProject) {
-			const data = await api.analytics.clicks(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
+			const data = await api.analytics.clicks(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined, reportFromDate, reportToDate);
 			timelineData = data.timeline || [];
 		} else {
-			const data = await api.analytics.clicks(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
+			const data = await api.analytics.clicks(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined, reportFromDate, reportToDate);
 			timelineData = data.timeline || [];
 		}
 		timelineLoading = false;
@@ -163,7 +165,7 @@
 		topRangesLoading = true;
 		try {
 			if (selectedProject) {
-				topRangesData = await api.analytics.topRanges(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
+				topRangesData = await api.analytics.topRanges(selectedProject, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined, reportFromDate, reportToDate);
 			} else {
 				topRangesData = await api.analytics.topRanges(undefined, filterSuggestionMode, filterPositionThreshold ? Number(filterPositionThreshold) : undefined);
 			}
@@ -210,6 +212,8 @@
 	$effect(() => {
 		filterSuggestionMode;
 		filterPositionThreshold;
+		reportFromDate;
+		reportToDate;
 		untrack(() => loadAll());
 	});
 
@@ -642,6 +646,30 @@
 		</div>
 	{/if}
 
+
+<!-- Suggestion mode + position filter -->
+	<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+		<h3 class="font-medium text-gray-900 mb-4">Диапазон дат</h3>
+		<div class="flex flex-wrap items-end gap-4">
+			<div class="min-w-[180px]">
+				<label class="block text-xs font-medium text-gray-700 mb-1">С даты</label>
+				<input type="date" bind:value={reportFromDate}
+					class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div class="min-w-[180px]">
+				<label class="block text-xs font-medium text-gray-700 mb-1">По дату</label>
+				<input type="date" bind:value={reportToDate}
+					class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<button onclick={() => { reportFromDate = ""; reportToDate = ""; }}
+				class="px-3 py-2 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-gray-600">
+				Сбросить даты
+			</button>
+			{#if reportFromDate || reportToDate}
+				<p class="text-xs text-gray-500">Аналитика отфильтрована по выбранным датам. Данные обновляются автоматически при смене дат.</p>
+			{/if}
+		</div>
+	</div>
 
 	<!-- Suggestion mode + position filter -->
 	<div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">

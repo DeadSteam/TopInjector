@@ -265,6 +265,8 @@ async def get_tracking_positions(
 @router.get("/top-ranges")
 async def get_top_ranges(
     project_id: str = Query(default=""),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
     suggestion_mode: str | None = Query(default=None),
     position_threshold: int | None = Query(default=None, ge=1, le=200),
     user_id: UUID = Depends(request_user_id),
@@ -285,6 +287,18 @@ async def get_top_ranges(
     ]
     if pid:
         where_conditions.append(QueueTask.project_id == pid)
+    if start_date:
+        try:
+            sd = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+            where_conditions.append(QueueTask.created_at >= sd)
+        except (ValueError, TypeError):
+            pass
+    if end_date:
+        try:
+            ed = (datetime.fromisoformat(end_date) + __import__('datetime').timedelta(days=1)).replace(tzinfo=timezone.utc)
+            where_conditions.append(QueueTask.created_at < ed)
+        except (ValueError, TypeError):
+            pass
 
     # When suggestion_mode is set, we need to filter by query info — fetch first
     range_label = case(

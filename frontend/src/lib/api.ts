@@ -371,21 +371,44 @@ export const api = {
 		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),
 		dashboardServers: () => fetcher("/api/queue/dashboard-servers"),
 		dashboardUsers: () => fetcher("/api/queue/dashboard-users"),
-		dashboardUsers: () => fetcher("/api/queue/dashboard-users"),
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),
-		clicks: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
-			fetcher(analyticsPath("/api/analytics/clicks", projectId, suggestionMode, positionThreshold)),
-		summary: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
-			fetcher(analyticsPath("/api/analytics/summary", projectId, suggestionMode, positionThreshold)),
+		clicks: (projectId?: string, suggestionMode?: string, positionThreshold?: number, startDate?: string, endDate?: string) => {
+			const qs = new URLSearchParams();
+			if (projectId) qs.set("project_id", projectId);
+			if (suggestionMode) qs.set("suggestion_mode", suggestionMode);
+			if (positionThreshold !== undefined && positionThreshold > 0) qs.set("position_threshold", String(positionThreshold));
+			if (startDate) qs.set("start_date", startDate);
+			if (endDate) qs.set("end_date", endDate);
+			const q = qs.toString();
+			return fetcher(q ? `/api/analytics/clicks?${q}` : "/api/analytics/clicks");
+		},
+		summary: (projectId?: string, suggestionMode?: string, positionThreshold?: number, startDate?: string, endDate?: string) => {
+			const qs = new URLSearchParams();
+			if (projectId) qs.set("project_id", projectId);
+			if (suggestionMode) qs.set("suggestion_mode", suggestionMode);
+			if (positionThreshold !== undefined && positionThreshold > 0) qs.set("position_threshold", String(positionThreshold));
+			if (startDate) qs.set("start_date", startDate);
+			if (endDate) qs.set("end_date", endDate);
+			const q = qs.toString();
+			return fetcher(q ? `/api/analytics/summary?${q}` : "/api/analytics/summary");
+		},
+		topRanges: (projectId?: string, suggestionMode?: string, positionThreshold?: number, startDate?: string, endDate?: string) => {
+			const qs = new URLSearchParams();
+			if (projectId) qs.set("project_id", projectId);
+			if (suggestionMode) qs.set("suggestion_mode", suggestionMode);
+			if (positionThreshold !== undefined && positionThreshold > 0) qs.set("position_threshold", String(positionThreshold));
+			if (startDate) qs.set("start_date", startDate);
+			if (endDate) qs.set("end_date", endDate);
+			const q = qs.toString();
+			return fetcher(q ? `/api/analytics/top-ranges?${q}` : "/api/analytics/top-ranges");
+		},
 		trackingPositions: (projectId?: string) => {
-		let path = "/api/analytics/tracking/positions";
-		if (projectId) path += `?project_id=${projectId}`;
-		return fetcher(path);
-	},
-	topRanges: (projectId?: string, suggestionMode?: string, positionThreshold?: number) =>
-		fetcher(analyticsPath("/api/analytics/top-ranges", projectId, suggestionMode, positionThreshold)),
+			let path = "/api/analytics/tracking/positions";
+			if (projectId) path += `?project_id=${projectId}`;
+			return fetcher(path);
+		},
 	},
 	users: {
 		profile: () => fetcher("/api/users/profile"),
