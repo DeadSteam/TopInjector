@@ -477,10 +477,12 @@ class WhiteLabel(UUIDModel):
 ### Фаза 5 (Frontend):
 - [x] ✅ Страница /settings/integrations — полностью функциональна (CRUD групп и серверов)
 - [x] ✅ Страница /plan полностью функциональна
-- [ ] ⛔ Создание проекта с выбором server группы — не реализуется (модель integration_group_id есть, UI select не добавлен)
-- [ ] ⛔ Dashboard табы + живые счётчики (клики/серверы/RPM) — не реализуется
+- [x] ✅ Создание проекта с выбором server группы — SELECT добавлен в модалку создания проекта (2026-10-28)
+- [x] ✅ Dashboard табы + живые счётчики (клики/серверы/RPM/план) — Users tab + progress bars + RPM counter (2026-10-28)
 - [x] ✅ Queue фильтр по «интеграции» — работает
 - [x] 🟡 Analytics дата-пикер + отчёты — уже были в коде
 - [x] ✅ prepay_per_click API endpoint доступен для frontend интеграции
+
+**Обновлено 2026-10-28:** все 5 оставшихся задач из GhostLab плана завершены: referral links, daily billing worker, integration group selector, XMLStock SERP API, dashboard Users tab + live счётчики.
 
 ---
