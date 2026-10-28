@@ -370,6 +370,8 @@ export const api = {
 		},
 		dashboardStats: () => fetcher("/api/queue/dashboard-stats"),
 		dashboardServers: () => fetcher("/api/queue/dashboard-servers"),
+		dashboardUsers: () => fetcher("/api/queue/dashboard-users"),
+		dashboardUsers: () => fetcher("/api/queue/dashboard-users"),
 	},
 	analytics: {
 		positions: () => fetcher("/api/analytics/positions"),

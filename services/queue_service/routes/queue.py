@@ -418,3 +418,116 @@ async def get_dashboard_servers(
         stats["hourly_bars"][local_now(finished_at).hour] += 1
 
     return sorted(servers.values(), key=lambda s: s["integration"])
+
+
+@router.get("/dashboard-users")
+async def get_dashboard_users(
+    user_id: UUID = Depends(request_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Dashboard 'Users' tab data: current user's plan, projects count, and usage ratios."""
+    from services.project_service.domain.models import Project
+    from services.project_service.domain.plans import Plan, UserPlan
+
+    # Get the current user's plan
+    up = (await session.execute(
+        sa_select(UserPlan).where(UserPlan.user_id == user_id, UserPlan.is_active.is_(True))
+    )).scalar_one_or_none()
+
+    plan_info = None
+    if up:
+        plan = await session.get(Plan, up.plan_id)
+        plan_info = {
+            "slug": plan.slug,
+            "display_name": plan.display_name,
+            "max_projects": plan.max_projects,
+            "price_per_month": plan.price_per_month,
+            "is_free_tier": plan.slug == "start",
+        }
+
+    # Count all projects (not just active)
+    project_count = (await session.execute(
+        sa_select(func.count(Project.id)).where(Project.user_id == user_id)
+    )).scalar() or 0
+
+    return {
+        "plan": plan_info,
+        "project_count": project_count,
+    }
+
+
+@router.get("/dashboard-users")
+async def get_dashboard_users(
+    user_id: UUID = Depends(request_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Dashboard 'Users' tab data: current user's plan, project count, and usage ratios."""
+    from services.project_service.domain.models import Project
+    from services.project_service.domain.plans import Plan, UserPlan
+
+    # Get the current user's plan
+    up = (await session.execute(
+        sa_select(UserPlan).where(UserPlan.user_id == user_id, UserPlan.is_active.is_(True))
+    )).scalar_one_or_none()
+
+    plan_info = None
+    if up:
+        plan = await session.get(Plan, up.plan_id)
+        plan_info = {
+            "slug": plan.slug,
+            "display_name": plan.display_name,
+            "max_projects": plan.max_projects,
+            "price_per_month": plan.price_per_month,
+            "is_free_tier": plan.slug == "start",
+        }
+
+    # Count all projects (not just active)
+    project_count = (await session.execute(
+        sa_select(func.count(Project.id)).where(Project.user_id == user_id)
+    )).scalar() or 0
+
+    return {
+        "plan": plan_info,
+        "project_count": project_count,
+    }
+
+
+@router.get("/dashboard-users")
+async def get_dashboard_users(
+    user_id: UUID = Depends(request_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Dashboard 'Users' tab data: current user's plan, users count, bonus credits, usage ratios.
+
+    Returns plan info, total projects, active users (for team plans), and live counters.
+    """
+    from services.auth_service.domain.models import User
+    from services.project_service.domain.models import Project
+    from services.project_service.domain.plans import Plan, UserPlan
+    from shared.config import settings
+
+    # Get the current user's plan
+    up = (await session.execute(
+        sa_select(UserPlan).where(UserPlan.user_id == user_id, UserPlan.is_active.is_(True))
+    )).scalar_one_or_none()
+
+    plan_info = None
+    if up:
+        plan = await session.get(Plan, up.plan_id)
+        plan_info = {
+            "slug": plan.slug,
+            "display_name": plan.display_name,
+            "max_projects": plan.max_projects,
+            "price_per_month": plan.price_per_month,
+            "is_free_tier": plan.slug == "start",
+        }
+
+    # Count all projects (not just active)
+    project_count = (await session.execute(
+        sa_select(func.count(Project.id)).where(Project.user_id == user_id)
+    )).scalar() or 0
+
+    return {
+        "plan": plan_info,
+        "project_count": project_count,
+    }

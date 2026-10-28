@@ -2,10 +2,11 @@
 	import { api } from "$lib/api";
 	import { onMount, onDestroy } from 'svelte';
 
-	let activeTab = $state<"overview" | "servers">("overview");
+	let activeTab = $state<"overview" | "users" | "servers">("overview");
 	let dashboardStats = $state<{ overdue: number; today_planned: number; today_completed: number; balance: number }>({
 		overdue: 0, today_planned: 0, today_completed: 0, balance: 0
 	});
+	let usersData = $state<{ plan: any; project_count: number }>({ plan: null, project_count: 0 });
 	let serversData = $state<Array<{
 		integration: string; label: string; pending: number; speed_per_15min: number; completed_24h: number; not_found_24h: number; hourly_bars: number[];
 	}>>([]);
@@ -13,12 +14,14 @@
 
 	async function loadAll() {
 		try {
-			const [stats, servers] = await Promise.all([
+			const [stats, servers, dashboardUsers] = await Promise.all([
 				api.queue.dashboardStats(),
 				api.queue.dashboardServers(),
+				api.queue.dashboardUsers(),
 			]);
 			dashboardStats = stats;
 			serversData = servers || [];
+				usersData = dashboardUsers || { plan: null, project_count: 0 };
 		} catch (err) {
 			console.error("Dashboard load failed:", err);
 		} finally {
@@ -93,11 +96,95 @@
 				class="px-4 py-2 text-sm font-medium border-b-2 transition-colors {activeTab === 'overview' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
 				Обзор
 			</button>
+			<button onclick={() => { activeTab = "users"; }}
+				class="px-4 py-2 text-sm font-medium border-b-2 transition-colors {activeTab === 'users' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
+				Пользователи
+			</button>
 			<button onclick={() => { activeTab = "servers"; }}
 				class="px-4 py-2 text-sm font-medium border-b-2 transition-colors {activeTab === 'servers' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
 				Серверы ({serversData.length})
 			</button>
 		</div>
+
+		<!-- Users Tab -->
+		{#if activeTab === 'users'}
+			<div class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-6">
+				<h3 class="text-base font-semibold text-gray-900 mb-4">Планы и использование</h3>
+
+				{#if usersData.plan}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+						<div class="border border-gray-200 rounded-lg p-4">
+							<p class="text-xs text-gray-500 mb-1">Текущий план</p>
+							<p class="text-lg font-bold text-gray-900">{usersData.plan.display_name}</p>
+							{#if !usersData.plan.is_free_tier}
+								<p class="text-xs text-green-600 mt-1">Активный тариф</p>
+							{:else}
+								<p class="text-xs text-gray-500 mt-1">Бесплатный план</p>
+							{/if}
+						</div>
+						<div class="border border-gray-200 rounded-lg p-4">
+							<p class="text-xs text-gray-500 mb-1">Лимит проектов</p>
+							<p class="text-lg font-bold text-gray-900">{usersData.project_count} / {usersData.plan.max_projects}</p>
+						</div>
+					</div>
+
+					<!-- Progress indicators -->
+					<div class="border border-gray-200 rounded-lg p-4">
+						<p class="text-sm font-medium text-gray-700 mb-3">Прогресс использования сегодня</p>
+
+						<!-- Clicks progress bar -->
+						<div class="mb-4">
+							<div class="flex justify-between items-center mb-1">
+								<span class="text-xs text-gray-600">Клики сегодня</span>
+								<span class="text-xs font-medium text-gray-900">{dashboardStats.today_completed} / {dashboardStats.today_planned}</span>
+							</div>
+							<div class="w-full bg-gray-200 rounded-full h-2.5">
+								{#if dashboardStats.today_planned > 0}
+									<div class="h-2.5 rounded-full transition-all duration-500 {
+										dashboardStats.today_completed / dashboardStats.today_planned > 0.9 ? 'bg-red-500' :
+										dashboardStats.today_completed / dashboardStats.today_planned > 0.7 ? 'bg-amber-500' : 'bg-green-500'
+									}" style="width: {Math.min(dashboardStats.today_completed / dashboardStats.today_planned * 100, 100)}%"></div>
+								{:else}
+									<div class="bg-green-500 h-2.5 rounded-full" style="width: 0%"></div>
+								{/if}
+							</div>
+							<p class="text-xs text-gray-500 mt-1">
+								{#if dashboardStats.today_planned > 0}
+									{Math.round(dashboardStats.today_completed / dashboardStats.today_planned * 100)}% от дневного плана
+								{:else}
+									Нет запланированных задач
+								{/if}
+							</p>
+						</div>
+
+						<!-- RPM indicator (clicks per minute) -->
+						<div>
+							<div class="flex justify-between items-center mb-1">
+								<span class="text-xs text-gray-600">RPM (живой счётчик)</span>
+								<span class="text-xs font-medium text-gray-900">
+									{#if serversData.length > 0}
+										{Math.round(serversData.reduce((sum, s) => sum + s.speed_per_15min, 0) / 15, 1)} кликов/мин
+									{:else}
+										0 кликов/мин
+									{/if}
+								</span>
+							</div>
+							<div class="w-full bg-gray-200 rounded-full h-2.5">
+								{#if serversData.length > 0}
+									{let rpm = Math.round(serversData.reduce((sum, s) => sum + s.speed_per_15min, 0) / 15, 1)}
+									<div class="h-2.5 rounded-full bg-blue-500 transition-all duration-500" style="width: {Math.min(rpm * 5, 100)}%"></div>
+								{/if}
+							</div>
+							<p class="text-xs text-gray-500 mt-1">Скорость обработки кликов в реальном времени (за последние 15 мин)</p>
+						</div>
+					</div>
+				{:else}
+					<div class="text-center py-8 text-gray-400">
+						<p>План не активен — бесплатный тариф Start</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Overview Tab -->
 		{#if activeTab === 'overview' && serversData.length > 0}
