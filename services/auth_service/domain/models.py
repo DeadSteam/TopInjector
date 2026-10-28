@@ -24,3 +24,5 @@ class User(UUIDModel):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     messenger_settings: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # telegram/max + stop_words
     external_services: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # xml_river / xml_stock
+    prepay_per_click_cop: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # prepaid cost per click in kopeks (rubles * 100)
+    bonus_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # bonus credits in kopeks

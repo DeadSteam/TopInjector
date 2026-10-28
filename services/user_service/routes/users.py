@@ -348,3 +348,33 @@ async def remove_stop_word(
     words = [x for x in (user.messenger_settings or {}).get("stop_words", []) if x != w]
     await _save_stop_words(user, session, words)
     return {"stop_words": words}
+
+
+# --- Prepay per click -------------------------------------------------------- #
+
+
+@router.get("/settings/prepay-per-click")
+async def get_prepay_per_click(
+    user: User = Depends(get_current_user),
+):
+    """Get the user's prepay per click setting in kopeks."""
+    return {"prepay_per_click_cop": user.prepay_per_click_cop}
+
+
+@router.post("/settings/prepay-per-click")
+async def update_prepay_per_click(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update the user's prepay per click setting (in kopeks / ruble * 100)."""
+    cop = body.get("prepay_per_click_cop", 0)
+    try:
+        cop = int(cop)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="prepay_per_click_cop must be an integer")
+    if cop < 0:
+        raise HTTPException(status_code=422, detail="prepay_per_click_cop cannot be negative")
+    user.prepay_per_click_cop = cop  # type: ignore[attr-defined]
+    await session.commit()
+    return {"updated": True, "prepay_per_click_cop": user.prepay_per_click_cop}

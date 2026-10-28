@@ -55,6 +55,9 @@
 	let showActionsCol = $state(true);
 	let showActiveToggle = $state(true);
 
+	// Integration groups (server groups for projects)
+	let integrationGroups = $state<Array<{id: string; name: string}>>([]);
+
 	// Source breakdown columns
 	let showSourceBreakdown = $state(false);
 	let sourceData = $state<Record<string, { completed_by_source: Record<string, number>; pending_by_source: Record<string, number> }>>({});
@@ -95,6 +98,7 @@
 	let createFormDailyLimit = $state(100);
 	let createFormGroupId = $state<string>("all");
 	let createFormIntegration = $state("default");
+	let createFormIntegrationGroupId = $state<string | null>(null);
 	let createFormScheduleStart = $state("");
 	let createFormScheduleEnd = $state("");
 	let createFormModsCapital = $state(false);
@@ -223,7 +227,7 @@
 
 	async function loadData() {
 		try {
-			await Promise.all([loadGroups(), loadProjects(), loadIntegrations()]);
+			await Promise.all([loadGroups(), loadProjects(), loadIntegrations(), loadIntegrationGroups()]);
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Ошибка загрузки";
 		} finally {
@@ -237,6 +241,14 @@
 			availableIntegrations = (data.integrations || []).map((i: any) => ({ key: i.key, label: i.label }));
 		} catch {
 			availableIntegrations = [{ key: "default", label: "Default (без интеграции)" }];
+		}
+	}
+
+	async function loadIntegrationGroups() {
+		try {
+			integrationGroups = await api.integrationGroups.list();
+		} catch {
+			integrationGroups = [];
 		}
 	}
 
@@ -364,6 +376,9 @@
 		if (createFormRegion) data.region = createFormRegion;
 		data.group_id = createFormGroupId === "all" ? null : createFormGroupId;
 
+		// Integration group (server group)
+		data.integration_group_id = createFormIntegrationGroupId ?? null;
+
 		// Integration
 		if (createFormIntegration !== "default") {
 			data.integrations.integration_type = createFormIntegration;
@@ -395,6 +410,7 @@
 			createFormName = ""; createFormDomain = ""; createFormRegion = "";
 			createFormStrategy = "daily"; createFormGroupId = "all"; createFormDailyLimit = 100;
 			createFormIntegration = "default";
+			createFormIntegrationGroupId = null;
 			createFormScheduleStart = ""; createFormScheduleEnd = "";
 			createFormModsCapital = false; createFormModsRandomCaps = false;
 			createFormModsTypos = false; createFormModsTrailingSpace = false;
@@ -1079,6 +1095,19 @@
 						</select>
 					</div>
 
+					<!-- Integration Group (Server Group) selector -->
+					<div>
+						<label class="block text-sm font-medium text-gray-700 mb-1">Группа серверов (Integration Group)</label>
+						<select bind:value={createFormIntegrationGroupId} class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" disabled={integrationGroups.length === 0}>
+							<option value={null}>Без группы серверов</option>
+							{#each integrationGroups as group}
+								<option value={group.id}>{group.name}</option>
+							{/each}
+						</select>
+						{#if integrationGroups.length === 0}
+							<p class="text-xs text-gray-500 mt-1">Создайте группу серверов в настройках</p>
+						{/if}
+					</div>
 					<!-- Schedule window -->
 					<div class="grid grid-cols-2 gap-3">
 						<div>

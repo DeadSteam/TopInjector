@@ -1,0 +1,26 @@
+[
+  {
+    "name": "",
+    "placeholder": "Поиск проектов...",
+    "type": "text",
+    "id": ""
+  },
+  {
+    "name": "",
+    "placeholder": "Мой проект",
+    "type": "text",
+    "id": ""
+  },
+  {
+    "name": "",
+    "placeholder": "https://example.com",
+    "type": "url",
+    "id": ""
+  },
+  {
+    "name": "",
+    "placeholder": "Москва",
+    "type": "text",
+    "id": ""
+  }
+]

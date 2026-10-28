@@ -38,10 +38,13 @@ def create_app() -> FastAPI:
         notifications as notification_router,
     )
     from services.project_service.routes import external_services as external_services_router
+    from services.project_service.routes import integration_groups as integration_groups_router
     from services.project_service.routes import plans as plans_router
     from services.project_service.routes import projects as project_router
+    from services.project_service.routes import referral as referral_router
     from services.project_service.routes import warmups as warmup_router
     from services.project_service.routes import whitelabel as whitelabel_router
+    from services.project_service.routes import xmlstock_serp as xmlstock_serp_router
     from services.queue_service.routes import queue as queue_router
     from services.user_service.routes import users as user_router
 
@@ -57,6 +60,9 @@ def create_app() -> FastAPI:
     app.include_router(plans_router.router, prefix="/api")
     app.include_router(external_services_router.router, prefix="/api/external-services")
     app.include_router(whitelabel_router.router, prefix="/api/whitelabel")
+    app.include_router(integration_groups_router.router)
+    app.include_router(referral_router.router)
+    app.include_router(xmlstock_serp_router.router)
 
     @app.get("/health")
     async def health():

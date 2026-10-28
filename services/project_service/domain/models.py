@@ -38,6 +38,9 @@ class Project(UUIDModel):
     group_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("project_groups.id", ondelete="SET NULL")
     )
+    integration_group_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("integration_groups.id", ondelete="SET NULL")
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     region: Mapped[str | None] = mapped_column(String(50), default="ru")
@@ -165,6 +168,23 @@ class BalanceTransaction(UUIDModel):
     type: Mapped[str] = mapped_column(String(20), nullable=False, default="add")  # add / set / spend / refund
 
 
+class ReferralLink(UUIDModel):
+    """Referral link for a user — generates unique registration links."""
+
+    __tablename__ = "referral_links"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    clicks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signups: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_referral_link_code"),
+    )
+
+
 class GeoCodePreset(UUIDModel):
     """Predefined city/region geo codes for the multigeo builder."""
 
@@ -181,6 +201,49 @@ class GeoCodePreset(UUIDModel):
     __table_args__ = (
         UniqueConstraint("city_name", "region_name", name="uq_geo_code_preset_city_region"),
     )
+
+
+class IntegrationGroup(UUIDModel):
+    """Integration (server) group — a set of servers with limits for projects."""
+
+    __tablename__ = "integration_groups"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    max_projects: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    current_project_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rpm_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    ip_whitelist: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
+    use_reserved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    servers: Mapped[list["IntegrationServer"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    class Config:
+        freeze_map = {"integration_groups": None}  # avoid circular reference in freeze
+
+
+class IntegrationServer(UUIDModel):
+    """A single integration server belonging to an integration group."""
+
+    __tablename__ = "integration_servers"
+
+    group_id: Mapped[UUID] = mapped_column(
+        ForeignKey("integration_groups.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(45))  # IPv4/IPv6 max length
+    software_type: Mapped[str] = mapped_column(String(30), nullable=False, default="portal")  # alpine/monstro/portal/fantom
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    max_queries_per_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    notes: Mapped[str | None] = mapped_column(String(500))
+
+    group: Mapped[IntegrationGroup] = relationship(back_populates="servers")
 
 
 class WarmupCampaign(UUIDModel):

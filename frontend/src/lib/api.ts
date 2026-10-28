@@ -458,4 +458,44 @@ export const api = {
 				.then(r => (r.ok ? r.json() : null))
 				.catch(() => null),
 	},
+	integrationGroups: {
+		list: () => fetcher("/integration-groups"),
+		create: (data: any) =>
+			fetcher("/integration-groups", { method: "POST", body: JSON.stringify(data) }),
+		update: (id: string, data: any) =>
+			fetcher(`/integration-groups/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+		get: (id: string) => fetcher(`/integration-groups/${id}`),
+		delete: (id: string) =>
+			fetcher(`/integration-groups/${id}`, { method: "DELETE" }),
+		servers: (groupId: string) => fetcher(`/integration-groups/${groupId}/servers`),
+		createServer: (groupId: string, data: any) =>
+			fetcher(`/integration-groups/${groupId}/servers`, { method: "POST", body: JSON.stringify(data) }),
+		updateServer: (groupId: string, serverId: string, data: any) =>
+			fetcher(`/integration-groups/${groupId}/servers/${serverId}`, { method: "PUT", body: JSON.stringify(data) }),
+		deleteServer: (groupId: string, serverId: string) =>
+			fetcher(`/integration-groups/${groupId}/servers/${serverId}`, { method: "DELETE" }),
+	},
+	prepayPerClick: {
+		get: () => fetcher("/users/settings/prepay-per-click"),
+		update: (cop: number) =>
+			fetcher("/users/settings/prepay-per-click", { method: "POST", body: JSON.stringify({ prepay_per_click_cop: cop }) }),
+	},
+	referral: {
+		getLink: () => fetcher("/referral/link"),
+		clickLink: (code: string) =>
+			fetcher("/referral/link/click", { method: "POST", body: JSON.stringify({ code }) }),
+		signupWithReferral: (code: string) =>
+			fetcher(`/referral/link/signup/${encodeURIComponent(code)}`, { method: "POST" }),
+		getStats: () => fetcher("/referral/stats"),
+	},
+	xmlstockSerp: {
+		listAccounts: () => fetcher("/xmlstock-serp/accounts"),
+		search: (data: { account_id: string; query: string; engine?: string; geo?: Record<string, string>; limit?: number }) =>
+			fetcher("/xmlstock-serp/search", { method: "POST", body: JSON.stringify(data) }),
+		batchSearch: (data: { account_id: string; queries: string[]; engine?: string; geo?: Record<string, string>; limit?: number }) =>
+			fetcher("/xmlstock-serp/batch-search", { method: "POST", body: JSON.stringify(data) }),
+		getHistory: (limit?: number) => fetcher(`/xmlstock-serp/history?limit=${limit ?? 50}`),
+		saveHistory: (data: { query: string; results: any[]; engine?: string }) =>
+			fetcher("/xmlstock-serp/save-history", { method: "POST", body: JSON.stringify(data) }),
+	},
 };
