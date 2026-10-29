@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = '0020_bigint_balance_credits'
-down_revision: str | None = '0019_user_bonus_credits_referral_links'
+down_revision: str | None = '0019_user_referral'
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
