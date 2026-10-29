@@ -4,25 +4,60 @@ All service routers are registered under a single FastAPI instance running on po
 Service boundaries are enforced via Python module packages and dependency injection.
 """
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
+from logging import getLogger
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from shared.config import settings
 
+# Configure root logger so app logs reach supervisord → docker logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+logger = getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Seed the admin user on first startup."""
-    # Run seed-admin synchronously (uses synchronous entry point which handles session internally).
+    """Seed the admin user on first startup, waiting for DB readiness."""
     try:
-        from workers.seed_admin import run_seed_admin as _seed
-        result = _seed()
-        app.state.seed_result = result  # expose for /health if needed
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        # Wait up to 10 seconds for the database to become reachable.
+        db_ok = False
+        tmp_eng = None
+        for _attempt in range(20):
+            await asyncio.sleep(0.5)
+            if tmp_eng:
+                await tmp_eng.dispose()
+            tmp_eng = create_async_engine(settings.database_url)
+            try:
+                async with tmp_eng.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                db_ok = True
+                break
+            except Exception:
+                continue
+
+        if not db_ok:
+            logger.warning("Database not ready after 10s — deferring admin seed")
+        else:
+            from workers.seed_admin import run_seed_admin as _seed
+            result = _seed()
+            logger.info("Seed admin completed: %s", result)
     except Exception:
-        # Non-fatal — admin may already exist or DB not ready yet.
-        pass
+        logger.exception("seed_admin failed (non-fatal)")
+    finally:
+        if tmp_eng:
+            await tmp_eng.dispose()
+
     yield
 
 
