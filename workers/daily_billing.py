@@ -95,6 +95,11 @@ async def daily_billing(session: AsyncSession, now: datetime | None = None) -> d
             skipped += 1
             continue
 
+        # Skip billing for admin accounts — they have unlimited credits.
+        if user.is_admin:
+            skipped += 1
+            continue
+
         plan = up.plan
         daily_cost = plan.price_per_day
 

@@ -1,4 +1,4 @@
-"""Integration tests for Celery workers: scheduler, stale_checker."""
+"""Integration tests for Celery workers: scheduler, stale_checker, daily_billing."""
 
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -78,3 +78,40 @@ async def test_mark_stale_tasks_flags_only_long_running(daily_project, app_fixtu
     async with app_fixture.state.session_factory() as session:
         rows = dict((await session.execute(select(QueueTask.id, QueueTask.status))).all())
     assert (rows[ids["stale"]], rows[ids["fresh"]], rows[ids["done"]]) == ("stuck", "in_progress", "completed")
+
+
+# -- Daily billing admin skip tests ------------------------------------------- #
+
+
+async def test_daily_billing_skips_admin_users(app_fixture):
+    """Admin users should be skipped by the daily billing cycle."""
+    from services.auth_service.domain.models import User, Plan
+    from services.project_service.domain.models import Project, UserPlan
+    from workers.daily_billing import daily_billing
+
+    async with app_fixture.state.session_factory() as session:
+        # Create admin user.
+        admin_user = User(email="admin-billing@example.com", password_hash="x", display_name="AdminBill", is_admin=True)
+        session.add(admin_user)
+        await session.flush()
+
+        # Create a normal user.
+        normal_user = User(email="normal-billing@example.com", password_hash="x", display_name="NormalBill")
+        session.add(normal_user)
+        await session.flush()
+
+        project_admin = Project(
+            id=uuid4(), user_id=admin_user.id, name="AdminProj", domain="admin.example.com", is_active=True,
+        )
+        session.add(project_admin)
+
+        project_normal = Project(
+            id=uuid4(), user_id=normal_user.id, name="NormalProj", domain="normal.example.com", is_active=True,
+        )
+        session.add(project_normal)
+        await session.commit()
+
+    # Run billing cycle.
+    result = await daily_billing(app_fixture.state.session_factory())
+
+    assert result["skipped"] >= 1  # admin should be skipped

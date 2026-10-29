@@ -4,10 +4,26 @@ All service routers are registered under a single FastAPI instance running on po
 Service boundaries are enforced via Python module packages and dependency injection.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from shared.config import settings
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Seed the admin user on first startup."""
+    # Run seed-admin synchronously (uses synchronous entry point which handles session internally).
+    try:
+        from workers.seed_admin import run_seed_admin as _seed
+        result = _seed()
+        app.state.seed_result = result  # expose for /health if needed
+    except Exception:
+        # Non-fatal — admin may already exist or DB not ready yet.
+        pass
+    yield
 
 
 def create_app() -> FastAPI:
@@ -20,6 +36,7 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",  # under /api so nginx routes it to the backend
+        lifespan=lifespan,
     )
 
     app.add_middleware(

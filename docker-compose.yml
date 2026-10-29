@@ -66,7 +66,10 @@ services:
       # Links in verification e-mails point here (nginx)
       FRONTEND_URL: "http://localhost:8082"
       # Comma-separated emails that may open the admin panel (/api/projects/admin/stats)
-      ADMIN_EMAILS: "admin@topinjector.com,admin2@topinjector.com"
+      ADMIN_EMAILS: "${ADMIN_EMAILS:-}"
+      # First admin user seeded on first DB-ready startup (set via .env in production).
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@topinjector.com}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-AdminPass123!}"
     depends_on:
       postgres:
         condition: service_healthy
