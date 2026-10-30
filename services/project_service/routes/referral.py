@@ -2,7 +2,6 @@
 
 from uuid import UUID, uuid4
 
-import passlib.hash
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
