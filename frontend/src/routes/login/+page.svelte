@@ -15,8 +15,20 @@
 	const accent = $derived(brand?.accent_color || "#3B82F6");
 	const brandName = $derived(brand?.platform_name?.trim() || "");
 
+	function isIpAddress(host: string): boolean {
+		return /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(host)
+			|| host.startsWith("[") || host === "::1";
+	}
+
 	onMount(async () => {
-		brand = await api.whitelabel.public(window.location.hostname);
+		const hostname = window.location.hostname;
+		if (!isIpAddress(hostname)) {
+			try {
+				brand = await api.whitelabel.public(hostname);
+			} catch (_e) {
+				// ignore
+			}
+		}
 	});
 
 	async function handleSubmit(e: Event) {
