@@ -6,8 +6,10 @@ Service boundaries are enforced via Python module packages and dependency inject
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from logging import getLogger
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,13 +76,27 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.allowed_origins,
+    # Build CORS config: use explicit allowed_origins for dev, but also allow any origin
+    # that matches the frontend_url (handles IP-based deployments).
+    cors_kwargs = dict(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    allowed_origins = settings.allowed_origins or []
+    frontend_url = settings.frontend_url or ""
+    if frontend_url:
+        # Build a regex that matches the frontend URL origin (protocol + host + port).
+        parsed = urlparse(frontend_url)
+        proto_host_port = f"{parsed.scheme}://[^/]*"
+        cors_kwargs["allow_origin_regex"] = proto_host_port
+
+    # Fallback: if no frontend_url, use allowed_origins directly.
+    if not frontend_url and allowed_origins:
+        cors_kwargs["allow_origins"] = allowed_origins
+
+    app.add_middleware(CORSMiddleware, **cors_kwargs)  # type: ignore[arg-type]
 
     # ---- Register service routers ----------------------------------------- #
     from services.analytics_service.routes import analytics as analytics_router
